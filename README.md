@@ -9,20 +9,34 @@ ClawdBot is a local-first AI assistant platform that connects to multiple messag
 ## About This Project
 
 - **Original Project**: [ClawdBot (TypeScript)](https://github.com/badlogic/clawdbot)
-- **Python Implementation**: Feature-complete port
+- **Python Implementation**: Core features complete, actively catching up
 - **Created**: 2026-01-27
 - **Version**: 0.3.0
 - **License**: MIT
-- **Feature Completeness**: 100% (compared to TypeScript version)
+- **Status**: 🚧 **~80-90% feature parity** - Core functionality complete and usable
+
+### Implementation Progress
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| **Agent Runtime** | ✅ Complete | Self-developed (not using Pi Agent), supports Claude + OpenAI |
+| **Tools System** | ✅ 24 tools | Core tools implemented and tested |
+| **Channel Plugins** | 🚧 17 channels | Framework ready, some need real API credentials testing |
+| **Skills Library** | ✅ 52 skills | Ported from TypeScript version |
+| **Gateway/API** | ✅ Complete | WebSocket server + HTTP API |
+| **Documentation** | ✅ Complete | All docs translated to English |
+
+**See [AGENT_IMPLEMENTATION.md](AGENT_IMPLEMENTATION.md) for details on our custom agent architecture.**
 
 ## Highlights (v0.3.0)
 
-- ✅ **24 Tools** - Complete tool parity including Browser, Cron, TTS, Image, Memory, Patch
-- ✅ **17 Channels** - Full channel support: Telegram, Discord, Slack, WhatsApp, Signal, Teams, LINE, iMessage, Matrix, Mattermost, and more
-- ✅ **52 Skills** - Complete skills library: Notion, Obsidian, Spotify, Trello, 1Password, Apple Notes, Tmux, and many more
+- ✅ **Self-Developed Agent** - Custom agent runtime (not Pi Agent), fully integrated
+- ✅ **24 Tools** - Including Browser, Cron, TTS, Image, Memory, Patch, and channel actions
+- 🚧 **17 Channels** - Framework implemented: Telegram, Discord, Slack, WhatsApp, Signal, Teams, LINE, iMessage, Matrix, Mattermost (some need API testing)
+- ✅ **52 Skills** - Library ported: Notion, Obsidian, Spotify, Trello, 1Password, Apple Notes, Tmux, etc.
 - ✅ **OpenAI-Compatible API** - `/v1/chat/completions` endpoint
-- ✅ **LanceDB Memory** - Full vector search
-- ✅ **Playwright Automation** - Browser control and testing
+- 🚧 **LanceDB Memory** - Vector search framework ready
+- 🚧 **Playwright Automation** - Browser framework ready
 
 ## Features
 

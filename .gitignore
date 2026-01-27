@@ -33,16 +33,37 @@ env/
 *.swo
 *~
 
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+.clawdbot/
+*.log
+
+# Docker & Secrets
+.env
+.env.local
+.env.*.local
+docker-compose.override.yml
+demo-config/
+
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
 .tox/
 
-# ClawdBot
-.clawdbot/
-*.log
+# Jupyter
+.ipynb_checkpoints
 
-# OS
-.DS_Store
-Thumbs.db
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+# Archives (过时文档)
+docs/archive/
