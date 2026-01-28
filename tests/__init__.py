@@ -1,1 +1,3 @@
-"""Test suite"""
+"""
+ClawdBot Python Test Suite
+"""

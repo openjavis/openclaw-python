@@ -1,67 +1,168 @@
-"""Session tests"""
-
+"""
+Tests for Session Management
+"""
 import pytest
-from pathlib import Path
-import tempfile
-from clawdbot.agents.session import Session, SessionManager, Message
+import json
+from clawdbot.agents.session import Session, Message, SessionManager
 
 
-def test_message_creation():
-    """Test message creation"""
-    msg = Message(role="user", content="Hello")
+class TestMessage:
+    """Test Message class"""
     
-    assert msg.role == "user"
-    assert msg.content == "Hello"
-    assert msg.timestamp is not None
+    def test_message_creation(self):
+        """Test creating a message"""
+        msg = Message(role="user", content="Hello")
+        assert msg.role == "user"
+        assert msg.content == "Hello"
+        assert msg.timestamp  # Should have timestamp
+    
+    def test_message_with_tool_calls(self):
+        """Test message with tool calls"""
+        tool_calls = [{"id": "1", "name": "bash", "arguments": {}}]
+        msg = Message(
+            role="assistant",
+            content="Running command",
+            tool_calls=tool_calls
+        )
+        assert msg.tool_calls == tool_calls
+    
+    def test_message_serialization(self):
+        """Test message can be serialized"""
+        msg = Message(role="user", content="Test")
+        data = msg.model_dump()
+        assert data["role"] == "user"
+        assert data["content"] == "Test"
 
 
-def test_session_creation():
-    """Test session creation"""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        session = Session("test-session", Path(tmpdir))
-        
+class TestSession:
+    """Test Session class"""
+    
+    def test_session_creation(self, temp_workspace):
+        """Test creating a session"""
+        session = Session("test-session", temp_workspace)
         assert session.session_id == "test-session"
+        assert session.workspace_dir == temp_workspace
         assert len(session.messages) == 0
-
-
-def test_session_add_message():
-    """Test adding messages to session"""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        session = Session("test-session", Path(tmpdir))
+    
+    def test_add_message(self, temp_workspace):
+        """Test adding a message"""
+        session = Session("test-session", temp_workspace)
+        msg = session.add_message("user", "Hello")
         
-        session.add_user_message("Hello")
-        session.add_assistant_message("Hi there!")
+        assert msg.role == "user"
+        assert msg.content == "Hello"
+        assert len(session.messages) == 1
+    
+    def test_add_user_message(self, temp_workspace):
+        """Test adding user message helper"""
+        session = Session("test-session", temp_workspace)
+        msg = session.add_user_message("Hello")
         
-        assert len(session.messages) == 2
-        assert session.messages[0].role == "user"
-        assert session.messages[1].role == "assistant"
-
-
-def test_session_persistence():
-    """Test session persistence"""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Create and save messages
-        session1 = Session("test-session", Path(tmpdir))
-        session1.add_user_message("Test message")
+        assert msg.role == "user"
+        assert msg.content == "Hello"
+    
+    def test_add_assistant_message(self, temp_workspace):
+        """Test adding assistant message helper"""
+        session = Session("test-session", temp_workspace)
+        tool_calls = [{"id": "1", "name": "test"}]
+        msg = session.add_assistant_message("Response", tool_calls=tool_calls)
         
-        # Load in new session instance
-        session2 = Session("test-session", Path(tmpdir))
+        assert msg.role == "assistant"
+        assert msg.content == "Response"
+        assert msg.tool_calls == tool_calls
+    
+    def test_add_tool_message(self, temp_workspace):
+        """Test adding tool message helper"""
+        session = Session("test-session", temp_workspace)
+        msg = session.add_tool_message("call-1", "Result")
         
+        assert msg.role == "tool"
+        assert msg.content == "Result"
+        assert msg.tool_call_id == "call-1"
+    
+    def test_get_messages(self, temp_workspace):
+        """Test getting messages"""
+        session = Session("test-session", temp_workspace)
+        session.add_user_message("Message 1")
+        session.add_user_message("Message 2")
+        session.add_user_message("Message 3")
+        
+        # Get all messages
+        all_msgs = session.get_messages()
+        assert len(all_msgs) == 3
+        
+        # Get limited messages
+        limited = session.get_messages(limit=2)
+        assert len(limited) == 2
+        assert limited[0].content == "Message 2"  # Last 2
+    
+    def test_session_persistence(self, temp_workspace):
+        """Test session is persisted to disk"""
+        session = Session("test-session", temp_workspace)
+        session.add_user_message("Test message")
+        
+        # Create new session with same ID
+        session2 = Session("test-session", temp_workspace)
+        
+        # Should load previous messages
         assert len(session2.messages) == 1
         assert session2.messages[0].content == "Test message"
+    
+    def test_clear_session(self, temp_workspace):
+        """Test clearing session"""
+        session = Session("test-session", temp_workspace)
+        session.add_user_message("Test")
+        assert len(session.messages) == 1
+        
+        session.clear()
+        assert len(session.messages) == 0
+    
+    def test_to_dict(self, temp_workspace):
+        """Test converting session to dict"""
+        session = Session("test-session", temp_workspace)
+        session.add_user_message("Hello")
+        
+        data = session.to_dict()
+        assert data["sessionId"] == "test-session"
+        assert data["messageCount"] == 1
+        assert len(data["messages"]) == 1
 
 
-def test_session_manager():
-    """Test session manager"""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        manager = SessionManager(Path(tmpdir))
+class TestSessionManager:
+    """Test SessionManager class"""
+    
+    def test_manager_creation(self, temp_workspace):
+        """Test creating session manager"""
+        manager = SessionManager(temp_workspace)
+        assert manager.workspace_dir == temp_workspace
+    
+    def test_get_session(self, temp_workspace):
+        """Test getting or creating session"""
+        manager = SessionManager(temp_workspace)
+        session1 = manager.get_session("session-1")
+        session2 = manager.get_session("session-1")
         
-        session1 = manager.get_session("session1")
-        session2 = manager.get_session("session2")
+        assert session1.session_id == "session-1"
+        assert session1 is session2  # Same instance
+    
+    def test_list_sessions(self, temp_workspace):
+        """Test listing sessions"""
+        manager = SessionManager(temp_workspace)
+        manager.get_session("session-1")
+        manager.get_session("session-2")
         
-        assert session1.session_id == "session1"
-        assert session2.session_id == "session2"
+        sessions = manager.list_sessions()
+        assert "session-1" in sessions
+        assert "session-2" in sessions
+    
+    def test_delete_session(self, temp_workspace):
+        """Test deleting session"""
+        manager = SessionManager(temp_workspace)
+        session = manager.get_session("test-session")
+        session.add_user_message("Test")
         
-        # Same session ID returns same instance
-        session1_again = manager.get_session("session1")
-        assert session1_again is session1
+        manager.delete_session("test-session")
+        
+        # Session should not exist
+        sessions = manager.list_sessions()
+        assert "test-session" not in sessions

@@ -6,6 +6,16 @@ import logging
 
 from .session import Session
 from .tools.base import AgentTool, ToolResult
+from .context import ContextManager, ContextWindow
+from .errors import (
+    AgentError,
+    ContextOverflowError,
+    RateLimitError,
+    ErrorRecovery,
+    classify_error,
+    is_retryable_error,
+    format_error_message
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +31,25 @@ class AgentEvent:
 class AgentRuntime:
     """Agent runtime that executes LLM turns with tools"""
 
-    def __init__(self, model: str = "anthropic/claude-opus-4-5-20250514", api_key: Optional[str] = None):
+    def __init__(
+        self,
+        model: str = "anthropic/claude-opus-4-5-20250514",
+        api_key: Optional[str] = None,
+        max_retries: int = 3,
+        enable_context_management: bool = True
+    ):
         self.model = model
         self.api_key = api_key
+        self.max_retries = max_retries
+        self.enable_context_management = enable_context_management
         self._client: Optional[Any] = None
+        
+        # Initialize context manager
+        if enable_context_management:
+            model_name = model.split("/")[1] if "/" in model else model
+            self.context_manager = ContextManager(model_name)
+        else:
+            self.context_manager = None
 
     def _get_client(self) -> Any:
         """Get LLM client (lazy initialization)"""
