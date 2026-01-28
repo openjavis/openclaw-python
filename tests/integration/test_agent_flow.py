@@ -29,6 +29,7 @@ class TestAgentFlow:
             async def mock_response(*args, **kwargs):
                 # Create mock LLMResponse objects
                 from clawdbot.agents.providers.base import LLMResponse
+
                 yield LLMResponse(type="text_delta", content="Hello! ")
                 yield LLMResponse(type="text_delta", content="I am ClawdBot.")
                 yield LLMResponse(type="done", content=None)
@@ -56,6 +57,7 @@ class TestAgentFlow:
             # Turn 1
             async def response1(*args, **kwargs):
                 from clawdbot.agents.providers.base import LLMResponse
+
                 yield LLMResponse(type="text_delta", content="Response 1")
                 yield LLMResponse(type="done", content=None)
 
@@ -67,6 +69,7 @@ class TestAgentFlow:
             # Turn 2
             async def response2(*args, **kwargs):
                 from clawdbot.agents.providers.base import LLMResponse
+
                 yield LLMResponse(type="text_delta", content="Response 2")
                 yield LLMResponse(type="done", content=None)
 
@@ -114,6 +117,7 @@ class TestAgentFlow:
 
             async def response(*args, **kwargs):
                 from clawdbot.agents.providers.base import LLMResponse
+
                 yield LLMResponse(type="text_delta", content="Pruned response")
                 yield LLMResponse(type="done", content=None)
 

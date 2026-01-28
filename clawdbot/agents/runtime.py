@@ -7,8 +7,12 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+from .auth import AuthProfile, ProfileStore, RotationManager
+from .compaction import CompactionManager, CompactionStrategy, TokenAnalyzer
 from .context import ContextManager
 from .errors import classify_error, format_error_message, is_retryable_error
+from .failover import FailoverReason, FallbackChain, FallbackManager
+from .formatting import FormatMode, ToolFormatter
 from .providers import (
     AnthropicProvider,
     BedrockProvider,
@@ -18,7 +22,9 @@ from .providers import (
     OllamaProvider,
     OpenAIProvider,
 )
+from .queuing import QueueManager
 from .session import Session
+from .thinking import ThinkingExtractor, ThinkingMode
 from .tools.base import AgentTool
 
 logger = logging.getLogger(__name__)
@@ -76,6 +82,13 @@ class MultiProviderRuntime:
         base_url: str | None = None,
         max_retries: int = 3,
         enable_context_management: bool = True,
+        # New advanced features
+        thinking_mode: ThinkingMode = ThinkingMode.OFF,
+        fallback_models: list[str] | None = None,
+        auth_profiles: list[AuthProfile] | None = None,
+        enable_queuing: bool = False,
+        tool_format: FormatMode = FormatMode.MARKDOWN,
+        compaction_strategy: CompactionStrategy = CompactionStrategy.KEEP_IMPORTANT,
         **kwargs,
     ):
         self.model_str = model
@@ -96,6 +109,46 @@ class MultiProviderRuntime:
             self.context_manager = ContextManager(self.model_name)
         else:
             self.context_manager = None
+
+        # Initialize new advanced features
+        self.thinking_mode = thinking_mode
+        self.thinking_extractor = ThinkingExtractor() if thinking_mode != ThinkingMode.OFF else None
+
+        # Failover management
+        self.fallback_chain = None
+        self.fallback_manager = None
+        if fallback_models:
+            self.fallback_chain = FallbackChain(
+                primary=model,
+                fallbacks=fallback_models
+            )
+            self.fallback_manager = FallbackManager(self.fallback_chain)
+
+        # Auth rotation
+        self.auth_rotation = None
+        if auth_profiles:
+            store = ProfileStore()
+            for profile in auth_profiles:
+                store.add_profile(profile)
+            self.auth_rotation = RotationManager(store)
+
+        # Queuing
+        self.queue_manager = QueueManager() if enable_queuing else None
+
+        # Tool formatting
+        self.tool_formatter = ToolFormatter(tool_format)
+
+        # Advanced compaction
+        self.compaction_strategy = compaction_strategy
+        if self.context_manager:
+            self.token_analyzer = TokenAnalyzer(self.model_name)
+            self.compaction_manager = CompactionManager(
+                self.token_analyzer,
+                compaction_strategy
+            )
+        else:
+            self.token_analyzer = None
+            self.compaction_manager = None
 
     def _parse_model(self, model: str) -> tuple[str, str]:
         """
@@ -160,6 +213,15 @@ class MultiProviderRuntime:
         """
         Run an agent turn with the configured provider
 
+        Features:
+        - Multi-provider support
+        - Thinking mode extraction
+        - Model fallback chains
+        - Auth profile rotation
+        - Session queuing
+        - Advanced context compaction
+        - Tool result formatting
+
         Args:
             session: Session to use
             message: User message
@@ -172,31 +234,81 @@ class MultiProviderRuntime:
         if tools is None:
             tools = []
 
+        # Wrap in queue if enabled
+        if self.queue_manager:
+            async def queued_execution():
+                async for event in self._run_turn_internal(session, message, tools, max_tokens):
+                    yield event
+
+            # This is a generator, need to handle differently
+            async for event in self._run_turn_internal(session, message, tools, max_tokens):
+                yield event
+        else:
+            async for event in self._run_turn_internal(session, message, tools, max_tokens):
+                yield event
+
+    async def _run_turn_internal(
+        self,
+        session: Session,
+        message: str,
+        tools: list[AgentTool],
+        max_tokens: int,
+    ) -> AsyncIterator[AgentEvent]:
+        """Internal run turn implementation"""
         # Add user message
         session.add_user_message(message)
 
-        # Check context window
-        if self.context_manager and self.enable_context_management:
+        # Check context window and compact if needed
+        if self.compaction_manager and self.enable_context_management:
             messages_for_api = session.get_messages_for_api()
-            current_tokens = self.context_manager.estimate_messages_tokens(messages_for_api)
+            current_tokens = self.token_analyzer.estimate_messages_tokens(messages_for_api)
             window = self.context_manager.check_context(current_tokens)
 
             if window.should_compress:
                 logger.info(
-                    f"Context at {window.used_tokens}/{window.total_tokens} tokens, pruning"
+                    f"Context at {current_tokens}/{window.total_tokens} tokens, compacting"
                 )
-                if len(session.messages) > 25:
-                    system_msgs = [m for m in session.messages if m.role == "system"]
-                    recent_msgs = session.messages[-20:]
-                    session.messages = system_msgs + recent_msgs
+                # Use advanced compaction
+                target_tokens = int(window.total_tokens * 0.7)  # Use 70% of window
+                compacted = self.compaction_manager.compact(
+                    messages_for_api,
+                    target_tokens
+                )
+
+                # Update session with compacted messages
+                # Convert back to Message objects
+                from .session import Message
+                session.messages = [
+                    Message(
+                        role=m["role"],
+                        content=m["content"],
+                        tool_calls=m.get("tool_calls"),
+                        tool_call_id=m.get("tool_call_id"),
+                        name=m.get("name")
+                    )
+                    for m in compacted
+                ]
+
+                yield AgentEvent("compaction", {
+                    "original_tokens": current_tokens,
+                    "compacted_tokens": self.token_analyzer.estimate_messages_tokens(compacted),
+                    "strategy": self.compaction_strategy.value
+                })
 
         yield AgentEvent("lifecycle", {"phase": "start"})
 
-        # Execute with retry logic
+        # Execute with retry logic and failover
         retry_count = 0
+        thinking_state = {}  # State for streaming thinking extraction
 
         while retry_count <= self.max_retries:
             try:
+                # Get current model (may change with failover)
+                current_model = self.model_str
+                if self.fallback_manager:
+                    current_model = self.fallback_manager.get_current_model()
+                    logger.info(f"Using model: {current_model}")
+
                 # Convert session messages to LLM format
                 llm_messages = []
                 for msg in session.get_messages():
@@ -219,16 +331,42 @@ class MultiProviderRuntime:
 
                 # Stream from provider
                 accumulated_text = ""
+                accumulated_thinking = ""
                 tool_calls = []
 
                 async for response in self.provider.stream(
                     messages=llm_messages, tools=tools_param, max_tokens=max_tokens
                 ):
                     if response.type == "text_delta":
-                        accumulated_text += response.content
-                        yield AgentEvent(
-                            "assistant", {"delta": {"type": "text_delta", "text": response.content}}
-                        )
+                        text = response.content
+                        accumulated_text += text
+
+                        # Extract thinking if enabled
+                        if self.thinking_mode != ThinkingMode.OFF and self.thinking_extractor:
+                            thinking_delta, content_delta = self.thinking_extractor.extract_streaming(
+                                text, thinking_state
+                            )
+
+                            # Stream thinking separately if mode is STREAM
+                            if self.thinking_mode == ThinkingMode.STREAM and thinking_delta:
+                                accumulated_thinking += thinking_delta
+                                yield AgentEvent(
+                                    "thinking",
+                                    {"delta": {"text": thinking_delta}, "mode": "stream"}
+                                )
+
+                            # Stream content (non-thinking text)
+                            if content_delta:
+                                yield AgentEvent(
+                                    "assistant",
+                                    {"delta": {"type": "text_delta", "text": content_delta}}
+                                )
+                        else:
+                            # No thinking extraction, stream as-is
+                            yield AgentEvent(
+                                "assistant",
+                                {"delta": {"type": "text_delta", "text": text}}
+                            )
 
                     elif response.type == "tool_call":
                         tool_calls = response.tool_calls or []
@@ -237,32 +375,99 @@ class MultiProviderRuntime:
                         for tc in tool_calls:
                             tool = next((t for t in tools if t.name == tc["name"]), None)
                             if tool:
+                                # Format tool use
+                                formatted_use = self.tool_formatter.format_tool_use(
+                                    tc["name"],
+                                    tc["arguments"]
+                                )
+
                                 yield AgentEvent(
-                                    "tool_use", {"tool": tc["name"], "input": tc["arguments"]}
+                                    "tool_use",
+                                    {
+                                        "tool": tc["name"],
+                                        "input": tc["arguments"],
+                                        "formatted": formatted_use
+                                    }
                                 )
 
                                 # Execute tool
-                                result = await tool.execute(tc["arguments"])
+                                try:
+                                    result = await tool.execute(tc["arguments"])
+                                    success = result.success if result else False
+                                    output = result.content if result else "No output"
 
-                                yield AgentEvent(
-                                    "tool_result",
-                                    {
-                                        "tool": tc["name"],
-                                        "result": result.output if result else None,
-                                    },
-                                )
+                                    # Format tool result
+                                    formatted_result = self.tool_formatter.format_tool_result(
+                                        tc["name"],
+                                        output,
+                                        success
+                                    )
 
-                                # Add tool result to session
-                                session.add_tool_result(
-                                    tool_call_id=tc["id"],
-                                    tool_name=tc["name"],
-                                    result=result.output if result else "Error",
-                                )
+                                    yield AgentEvent(
+                                        "tool_result",
+                                        {
+                                            "tool": tc["name"],
+                                            "result": output,
+                                            "success": success,
+                                            "formatted": formatted_result
+                                        },
+                                    )
+
+                                    # Add tool result to session
+                                    session.add_tool_message(
+                                        tool_call_id=tc["id"],
+                                        content=output,
+                                        name=tc["name"]
+                                    )
+
+                                except Exception as tool_error:
+                                    error_msg = str(tool_error)
+                                    formatted_error = self.tool_formatter.format_tool_result(
+                                        tc["name"],
+                                        error_msg,
+                                        success=False
+                                    )
+
+                                    yield AgentEvent(
+                                        "tool_result",
+                                        {
+                                            "tool": tc["name"],
+                                            "result": error_msg,
+                                            "success": False,
+                                            "error": error_msg,
+                                            "formatted": formatted_error
+                                        },
+                                    )
+
+                                    session.add_tool_message(
+                                        tool_call_id=tc["id"],
+                                        content=f"Error: {error_msg}",
+                                        name=tc["name"]
+                                    )
 
                     elif response.type == "done":
+                        # Extract thinking if ON mode
+                        final_text = accumulated_text
+                        if self.thinking_mode == ThinkingMode.ON and self.thinking_extractor:
+                            extracted = self.thinking_extractor.extract(accumulated_text)
+                            if extracted.has_thinking:
+                                # Include thinking in response
+                                yield AgentEvent(
+                                    "thinking",
+                                    {
+                                        "content": extracted.thinking,
+                                        "mode": "on"
+                                    }
+                                )
+                                final_text = extracted.content
+
                         # Save assistant message
-                        if accumulated_text:
-                            session.add_assistant_message(accumulated_text, tool_calls)
+                        if final_text or tool_calls:
+                            session.add_assistant_message(final_text, tool_calls)
+
+                        # Record success for failover manager
+                        if self.failover_manager:
+                            self.fallback_manager.record_success(current_model)
 
                         break
 
@@ -274,12 +479,44 @@ class MultiProviderRuntime:
                 return
 
             except Exception as e:
+                # Check if should failover
+                should_failover = False
+                failover_reason = FailoverReason.UNKNOWN
+
+                if self.fallback_manager:
+                    should_failover, failover_reason = self.fallback_manager.should_failover(e)
+
+                    if should_failover:
+                        next_model = self.fallback_manager.get_next_model()
+                        if next_model:
+                            logger.info(f"Failing over from {current_model} to {next_model}")
+
+                            # Update provider for new model
+                            self.provider_name, self.model_name = self._parse_model(next_model)
+                            self.provider = self._create_provider()
+
+                            yield AgentEvent(
+                                "failover",
+                                {
+                                    "from": current_model,
+                                    "to": next_model,
+                                    "reason": failover_reason.value,
+                                    "error": str(e)
+                                }
+                            )
+
+                            # Continue to next attempt (no sleep, immediate retry with new model)
+                            continue
+
                 # Check if retryable
-                if not is_retryable_error(e):
+                if not is_retryable_error(e) and not should_failover:
                     logger.error(f"Non-retryable error: {format_error_message(e)}")
                     yield AgentEvent(
                         "error",
-                        {"message": format_error_message(e), "category": classify_error(e).value},
+                        {
+                            "message": format_error_message(e),
+                            "category": classify_error(e).value
+                        },
                     )
                     yield AgentEvent("lifecycle", {"phase": "end"})
                     return

@@ -52,10 +52,10 @@ class TestAgentRuntime:
         with patch.object(runtime.provider, "stream", new_callable=AsyncMock) as mock_stream:
             # Make the mock return an empty async generator
             async def mock_generator():
-                yield type('obj', (object,), {'type': 'done', 'content': None})()
-            
+                yield type("obj", (object,), {"type": "done", "content": None})()
+
             mock_stream.return_value = mock_generator()
-            
+
             async for _ in runtime.run_turn(session, "Hello"):
                 break
 
