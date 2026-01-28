@@ -167,14 +167,14 @@ class AgentTool(ABC):
         """Get JSON schema for tool parameters"""
         pass
 
-    @abstractmethod
     async def _execute_impl(self, params: dict[str, Any]) -> ToolResult:
         """
         Internal execution implementation
-
-        Override this method in subclasses instead of execute()
+        
+        Override this method in subclasses if you want to use the built-in
+        timeout/permission/rate-limit features. Otherwise, override execute() directly.
         """
-        pass
+        raise NotImplementedError("Subclass must implement either _execute_impl or execute")
 
     async def execute(self, params: dict[str, Any]) -> ToolResult:
         """
@@ -186,10 +186,23 @@ class AgentTool(ABC):
         - Timeout control
         - Metrics collection
         - Output size limiting
+        
+        Subclasses can either:
+        1. Override this method directly (for custom behavior)
+        2. Override _execute_impl (to use built-in features)
         """
         start_time = time.time()
 
         try:
+            # Check if subclass overrides execute directly
+            # If so, skip the wrapper logic to avoid recursion
+            if type(self).execute != AgentTool.execute:
+                # Subclass has custom execute, this shouldn't happen
+                # but if it does, just call the implementation
+                raise NotImplementedError(
+                    "If overriding execute(), don't call super().execute()"
+                )
+
             # Check permissions
             self._check_permissions()
 

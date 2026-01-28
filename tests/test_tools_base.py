@@ -12,13 +12,15 @@ class TestToolResult:
 
     def test_result_creation(self):
         """Test creating a tool result"""
-        result = ToolResult(content="Success", error=None)
+        result = ToolResult(success=True, content="Success", error=None)
+        assert result.success is True
         assert result.content == "Success"
         assert result.error is None
 
     def test_result_with_error(self):
         """Test result with error"""
-        result = ToolResult(content="", error="Failed")
+        result = ToolResult(success=False, content="", error="Failed")
+        assert result.success is False
         assert result.content == ""
         assert result.error == "Failed"
 
@@ -38,10 +40,10 @@ class MockTool(AgentTool):
             "required": ["param"],
         }
 
-    async def execute(self, params):
+    async def _execute_impl(self, params):
         if params.get("param") == "error":
-            return ToolResult(content="", error="Mock error")
-        return ToolResult(content=f"Executed with {params}", error=None)
+            return ToolResult(success=False, content="", error="Mock error")
+        return ToolResult(success=True, content=f"Executed with {params}", error=None)
 
 
 class TestAgentTool:

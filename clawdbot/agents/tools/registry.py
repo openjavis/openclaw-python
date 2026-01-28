@@ -33,11 +33,12 @@ class ToolRegistry:
         self,
         session_manager: Optional["SessionManager"] = None,
         channel_registry: Any | None = None,
+        auto_register: bool = True,
     ):
         self._tools: dict[str, AgentTool] = {}
-        self._session_manager = session_manager  # Must be provided when needed
+        self._session_manager = session_manager
         self._channel_registry = channel_registry
-        if session_manager:  # Only register tools that need session manager if provided
+        if auto_register:
             self._register_default_tools()
 
     def _register_default_tools(self) -> None:
@@ -57,11 +58,12 @@ class ToolRegistry:
         # Image analysis
         self.register(ImageTool())
 
-        # Session management
-        self.register(SessionsListTool(self._session_manager))
-        self.register(SessionsHistoryTool(self._session_manager))
-        self.register(SessionsSendTool(self._session_manager))
-        self.register(SessionsSpawnTool(self._session_manager))
+        # Session management (only if session manager available)
+        if self._session_manager:
+            self.register(SessionsListTool(self._session_manager))
+            self.register(SessionsHistoryTool(self._session_manager))
+            self.register(SessionsSendTool(self._session_manager))
+            self.register(SessionsSpawnTool(self._session_manager))
 
         # Advanced tools
         self.register(BrowserTool())

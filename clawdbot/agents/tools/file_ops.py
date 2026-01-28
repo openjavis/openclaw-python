@@ -24,7 +24,7 @@ class ReadFileTool(AgentTool):
             "required": ["path"],
         }
 
-    async def execute(self, params: dict[str, Any]) -> ToolResult:
+    async def _execute_impl(self, params: dict[str, Any]) -> ToolResult:
         """Read file"""
         file_path = params.get("path", "")
 
@@ -66,7 +66,7 @@ class WriteFileTool(AgentTool):
             "required": ["path", "content"],
         }
 
-    async def execute(self, params: dict[str, Any]) -> ToolResult:
+    async def _execute_impl(self, params: dict[str, Any]) -> ToolResult:
         """Write file"""
         file_path = params.get("path", "")
         content = params.get("content", "")
@@ -109,7 +109,7 @@ class EditFileTool(AgentTool):
             "required": ["path", "old_text", "new_text"],
         }
 
-    async def execute(self, params: dict[str, Any]) -> ToolResult:
+    async def _execute_impl(self, params: dict[str, Any]) -> ToolResult:
         """Edit file"""
         file_path = params.get("path", "")
         old_text = params.get("old_text", "")
