@@ -33,6 +33,8 @@ dependencies = [
     # LLM
     "anthropic>=0.18.0",
     "openai>=1.12.0",
+    "google-generativeai>=0.3.0",
+    "boto3>=1.34.0",  # AWS Bedrock
     # Channels
     "python-telegram-bot>=21.0",
     "discord.py>=2.3.0",
