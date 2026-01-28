@@ -2,7 +2,7 @@
 Tests for authentication module
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import Mock
 
 import pytest
@@ -22,7 +22,7 @@ class TestAPIKey:
             key_id="test-id",
             key_hash="hash123",
             name="test-key",
-            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+            expires_at=datetime.now(UTC) - timedelta(days=1),
         )
         assert not key.is_valid()
 
