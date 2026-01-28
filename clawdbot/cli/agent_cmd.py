@@ -35,12 +35,12 @@ def list_agents() -> None:
 
     config = load_config()
 
-    if not config.agents.list:
+    if not config.agents or not config.agents.agents:
         console.print("[yellow]No agents configured[/yellow]")
         return
 
     console.print("[cyan]Configured Agents:[/cyan]\n")
-    for agent in config.agents.list:
+    for agent in config.agents.agents:
         console.print(f"  • [bold]{agent.id}[/bold]")
         if agent.name:
             console.print(f"    Name: {agent.name}")

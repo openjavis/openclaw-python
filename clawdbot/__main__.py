@@ -2,7 +2,7 @@
 Entry point for python -m clawdbot
 """
 
-from .cli import app
+from .cli.main import app
 
 if __name__ == "__main__":
     app()

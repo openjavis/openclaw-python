@@ -159,7 +159,7 @@ def rate_limit(
 
     def decorator(func):
         @wraps(func)
-        async def wrapper(*args, request: Request = None, **kwargs):
+        async def wrapper(*args, request: Request | None = None, **kwargs):
             if request:
                 # Get identifier
                 if identifier_fn:
