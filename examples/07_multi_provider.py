@@ -12,7 +12,7 @@ This example shows how to use different LLM providers with ClawdBot:
 import asyncio
 import os
 
-from clawdbot.agents.runtime_new import MultiProviderRuntime
+from clawdbot.agents.runtime import MultiProviderRuntime
 from clawdbot.agents.session import Session
 
 

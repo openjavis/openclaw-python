@@ -1,10 +1,23 @@
-"""Agent runtime with LLM integration"""
+"""
+Enhanced Agent runtime with multi-provider support
+"""
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
 from .context import ContextManager
+from .errors import classify_error, format_error_message, is_retryable_error
+from .providers import (
+    AnthropicProvider,
+    BedrockProvider,
+    GeminiProvider,
+    LLMMessage,
+    LLMProvider,
+    OllamaProvider,
+    OpenAIProvider,
+)
 from .session import Session
 from .tools.base import AgentTool
 
@@ -19,67 +32,123 @@ class AgentEvent:
         self.data = data
 
 
-class AgentRuntime:
-    """Agent runtime that executes LLM turns with tools"""
+class MultiProviderRuntime:
+    """
+    Enhanced Agent runtime with support for multiple LLM providers
+
+    Supported providers:
+    - anthropic: Claude models
+    - openai: GPT models
+    - gemini: Google Gemini
+    - bedrock: AWS Bedrock
+    - ollama: Local models
+    - openai-compatible: Any OpenAI-compatible API
+
+    Model format: "provider/model" or just "model" (defaults to anthropic)
+
+    Examples:
+        # Anthropic
+        runtime = MultiProviderRuntime("anthropic/claude-opus-4-5")
+
+        # OpenAI
+        runtime = MultiProviderRuntime("openai/gpt-4")
+
+        # Google Gemini
+        runtime = MultiProviderRuntime("gemini/gemini-pro")
+
+        # AWS Bedrock
+        runtime = MultiProviderRuntime("bedrock/anthropic.claude-3-sonnet")
+
+        # Ollama (local)
+        runtime = MultiProviderRuntime("ollama/llama3")
+
+        # OpenAI-compatible (custom base URL)
+        runtime = MultiProviderRuntime(
+            "lmstudio/model-name",
+            base_url="http://localhost:1234/v1"
+        )
+    """
 
     def __init__(
         self,
         model: str = "anthropic/claude-opus-4-5-20250514",
         api_key: str | None = None,
+        base_url: str | None = None,
         max_retries: int = 3,
         enable_context_management: bool = True,
+        **kwargs,
     ):
-        self.model = model
+        self.model_str = model
         self.api_key = api_key
+        self.base_url = base_url
         self.max_retries = max_retries
         self.enable_context_management = enable_context_management
-        self._client: Any | None = None
+        self.extra_params = kwargs
+
+        # Parse provider and model
+        self.provider_name, self.model_name = self._parse_model(model)
+
+        # Initialize provider
+        self.provider = self._create_provider()
 
         # Initialize context manager
         if enable_context_management:
-            model_name = model.split("/")[1] if "/" in model else model
-            self.context_manager = ContextManager(model_name)
+            self.context_manager = ContextManager(self.model_name)
         else:
             self.context_manager = None
 
-    def _get_client(self) -> Any:
-        """Get LLM client (lazy initialization)"""
-        if self._client is not None:
-            return self._client
+    def _parse_model(self, model: str) -> tuple[str, str]:
+        """
+        Parse model string into provider and model name
 
-        provider = self.model.split("/")[0] if "/" in self.model else "anthropic"
-
-        if provider == "anthropic":
-            import os
-
-            import anthropic
-
-            api_key = self.api_key or os.getenv("ANTHROPIC_API_KEY")
-            self._client = anthropic.AsyncAnthropic(api_key=api_key)
-        elif provider == "openai":
-            import os
-
-            import openai
-
-            api_key = self.api_key or os.getenv("OPENAI_API_KEY")
-            self._client = openai.AsyncOpenAI(api_key=api_key)
+        Examples:
+            "anthropic/claude-opus" -> ("anthropic", "claude-opus")
+            "gemini/gemini-pro" -> ("gemini", "gemini-pro")
+            "claude-opus" -> ("anthropic", "claude-opus")  # default
+        """
+        if "/" in model:
+            parts = model.split("/", 1)
+            return parts[0], parts[1]
         else:
-            raise ValueError(f"Unsupported model provider: {provider}")
+            # Default to anthropic
+            return "anthropic", model
 
-        return self._client
+    def _create_provider(self) -> LLMProvider:
+        """Create appropriate provider based on provider name"""
+        provider_name = self.provider_name.lower()
 
-    def _format_tools_for_api(self, tools: list[AgentTool]) -> list[dict[str, Any]]:
-        """Format tools for API"""
-        formatted = []
-        for tool in tools:
-            formatted.append(
-                {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "input_schema": tool.get_schema(),
-                }
-            )
-        return formatted
+        # Common parameters
+        kwargs = {
+            "model": self.model_name,
+            "api_key": self.api_key,
+            "base_url": self.base_url,
+            **self.extra_params,
+        }
+
+        # Create provider
+        if provider_name == "anthropic":
+            return AnthropicProvider(**kwargs)
+
+        elif provider_name == "openai":
+            return OpenAIProvider(**kwargs)
+
+        elif provider_name in ("gemini", "google", "google-gemini"):
+            return GeminiProvider(**kwargs)
+
+        elif provider_name in ("bedrock", "aws-bedrock"):
+            return BedrockProvider(**kwargs)
+
+        elif provider_name == "ollama":
+            return OllamaProvider(**kwargs)
+
+        elif provider_name in ("lmstudio", "openai-compatible", "custom"):
+            # OpenAI-compatible with custom base URL
+            return OpenAIProvider(**kwargs)
+
+        else:
+            # Unknown provider, try OpenAI-compatible
+            logger.warning(f"Unknown provider '{provider_name}', trying OpenAI-compatible mode")
+            return OpenAIProvider(**kwargs)
 
     async def run_turn(
         self,
@@ -88,192 +157,162 @@ class AgentRuntime:
         tools: list[AgentTool] | None = None,
         max_tokens: int = 4096,
     ) -> AsyncIterator[AgentEvent]:
-        """Run an agent turn with streaming"""
+        """
+        Run an agent turn with the configured provider
+
+        Args:
+            session: Session to use
+            message: User message
+            tools: Optional list of tools
+            max_tokens: Maximum tokens to generate
+
+        Yields:
+            AgentEvent objects
+        """
         if tools is None:
             tools = []
 
-        # Add user message to session
+        # Add user message
         session.add_user_message(message)
 
-        # Build messages for API
-        messages = []
-        for msg in session.get_messages():
-            if msg.role == "tool":
-                # Tool result message
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": msg.tool_call_id,
-                                "content": msg.content,
-                            }
-                        ],
-                    }
+        # Check context window
+        if self.context_manager and self.enable_context_management:
+            messages_for_api = session.get_messages_for_api()
+            current_tokens = self.context_manager.estimate_messages_tokens(messages_for_api)
+            window = self.context_manager.check_context(current_tokens)
+
+            if window.should_compress:
+                logger.info(
+                    f"Context at {window.used_tokens}/{window.total_tokens} tokens, pruning"
                 )
-            else:
-                # Regular message
-                content = msg.content
-                if msg.tool_calls:
-                    # Message with tool calls
-                    messages.append(
-                        {
-                            "role": msg.role,
-                            "content": [
-                                {"type": "text", "text": content} if content else None,
-                                *[
-                                    {
-                                        "type": "tool_use",
-                                        "id": tc["id"],
-                                        "name": tc["name"],
-                                        "input": tc["arguments"],
-                                    }
-                                    for tc in msg.tool_calls
-                                ],
-                            ],
-                        }
-                    )
-                    # Remove None values
-                    messages[-1]["content"] = [c for c in messages[-1]["content"] if c is not None]
-                else:
-                    messages.append({"role": msg.role, "content": content})
+                if len(session.messages) > 25:
+                    system_msgs = [m for m in session.messages if m.role == "system"]
+                    recent_msgs = session.messages[-20:]
+                    session.messages = system_msgs + recent_msgs
 
         yield AgentEvent("lifecycle", {"phase": "start"})
 
-        try:
-            provider = self.model.split("/")[0] if "/" in self.model else "anthropic"
-            model_name = self.model.split("/")[1] if "/" in self.model else self.model
+        # Execute with retry logic
+        retry_count = 0
 
-            if provider == "anthropic":
-                async for event in self._run_anthropic(messages, tools, model_name, max_tokens):
-                    yield event
-            elif provider == "openai":
-                async for event in self._run_openai(messages, tools, model_name, max_tokens):
-                    yield event
+        while retry_count <= self.max_retries:
+            try:
+                # Convert session messages to LLM format
+                llm_messages = []
+                for msg in session.get_messages():
+                    llm_messages.append(LLMMessage(role=msg.role, content=msg.content))
 
-            yield AgentEvent("lifecycle", {"phase": "end"})
+                # Format tools for provider
+                tools_param = None
+                if tools:
+                    tools_param = [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": tool.name,
+                                "description": tool.description,
+                                "parameters": tool.parameters,
+                            },
+                        }
+                        for tool in tools
+                    ]
 
-        except Exception as e:
-            logger.error(f"Agent turn error: {e}", exc_info=True)
-            yield AgentEvent("lifecycle", {"phase": "error", "error": str(e)})
-            raise
+                # Stream from provider
+                accumulated_text = ""
+                tool_calls = []
 
-    async def _run_anthropic(
-        self, messages: list[dict[str, Any]], tools: list[AgentTool], model: str, max_tokens: int
-    ) -> AsyncIterator[AgentEvent]:
-        """Run with Anthropic API"""
-        client = self._get_client()
-
-        # Format tools
-        tools_param = self._format_tools_for_api(tools) if tools else None
-
-        # Stream response
-        accumulated_text = ""
-        tool_calls = []
-
-        async with client.messages.stream(
-            model=model, max_tokens=max_tokens, messages=messages, tools=tools_param
-        ) as stream:
-            async for event in stream:
-                if hasattr(event, "type"):
-                    if event.type == "content_block_start":
-                        if hasattr(event, "content_block") and event.content_block.type == "text":
-                            yield AgentEvent(
-                                "assistant", {"delta": {"type": "text_delta", "text": ""}}
-                            )
-                    elif event.type == "content_block_delta":
-                        if hasattr(event, "delta"):
-                            if event.delta.type == "text_delta":
-                                text = event.delta.text
-                                accumulated_text += text
-                                yield AgentEvent(
-                                    "assistant", {"delta": {"type": "text_delta", "text": text}}
-                                )
-                    elif event.type == "content_block_stop":
-                        pass
-
-            # Get final message
-            final_message = await stream.get_final_message()
-
-            # Check for tool calls
-            for block in final_message.content:
-                if block.type == "tool_use":
-                    tool_calls.append(
-                        {"id": block.id, "name": block.name, "arguments": block.input}
-                    )
-
-                    # Execute tool
-                    tool = next((t for t in tools if t.name == block.name), None)
-                    if tool:
+                async for response in self.provider.stream(
+                    messages=llm_messages, tools=tools_param, max_tokens=max_tokens
+                ):
+                    if response.type == "text_delta":
+                        accumulated_text += response.content
                         yield AgentEvent(
-                            "tool",
-                            {"toolCallId": block.id, "toolName": block.name, "phase": "start"},
+                            "assistant", {"delta": {"type": "text_delta", "text": response.content}}
                         )
 
-                        try:
-                            result = await tool.execute(block.input)
-                            yield AgentEvent(
-                                "tool",
-                                {
-                                    "toolCallId": block.id,
-                                    "toolName": block.name,
-                                    "phase": "end",
-                                    "result": result.content,
-                                },
-                            )
-                        except Exception as e:
-                            yield AgentEvent(
-                                "tool",
-                                {
-                                    "toolCallId": block.id,
-                                    "toolName": block.name,
-                                    "phase": "error",
-                                    "error": str(e),
-                                },
-                            )
+                    elif response.type == "tool_call":
+                        tool_calls = response.tool_calls or []
 
-        # Save assistant message
-        # Note: Session saving handled by caller
+                        # Execute tools
+                        for tc in tool_calls:
+                            tool = next((t for t in tools if t.name == tc["name"]), None)
+                            if tool:
+                                yield AgentEvent(
+                                    "tool_use", {"tool": tc["name"], "input": tc["arguments"]}
+                                )
 
-    async def _run_openai(
-        self, messages: list[dict[str, Any]], tools: list[AgentTool], model: str, max_tokens: int
-    ) -> AsyncIterator[AgentEvent]:
-        """Run with OpenAI API"""
-        client = self._get_client()
+                                # Execute tool
+                                result = await tool.execute(tc["arguments"])
 
-        # Format tools for OpenAI
-        tools_param = None
-        if tools:
-            tools_param = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": tool.get_schema(),
+                                yield AgentEvent(
+                                    "tool_result",
+                                    {
+                                        "tool": tc["name"],
+                                        "result": result.output if result else None,
+                                    },
+                                )
+
+                                # Add tool result to session
+                                session.add_tool_result(
+                                    tool_call_id=tc["id"],
+                                    tool_name=tc["name"],
+                                    result=result.output if result else "Error",
+                                )
+
+                    elif response.type == "done":
+                        # Save assistant message
+                        if accumulated_text:
+                            session.add_assistant_message(accumulated_text, tool_calls)
+
+                        break
+
+                    elif response.type == "error":
+                        raise Exception(response.content)
+
+                # Success, exit retry loop
+                yield AgentEvent("lifecycle", {"phase": "end"})
+                return
+
+            except Exception as e:
+                # Check if retryable
+                if not is_retryable_error(e):
+                    logger.error(f"Non-retryable error: {format_error_message(e)}")
+                    yield AgentEvent(
+                        "error",
+                        {"message": format_error_message(e), "category": classify_error(e).value},
+                    )
+                    yield AgentEvent("lifecycle", {"phase": "end"})
+                    return
+
+                if retry_count >= self.max_retries:
+                    logger.error(f"Max retries reached: {format_error_message(e)}")
+                    yield AgentEvent(
+                        "error",
+                        {
+                            "message": f"Max retries exceeded: {format_error_message(e)}",
+                            "category": classify_error(e).value,
+                        },
+                    )
+                    yield AgentEvent("lifecycle", {"phase": "end"})
+                    return
+
+                # Retry with exponential backoff
+                retry_count += 1
+                delay = min(2 ** (retry_count - 1), 30)
+                logger.warning(f"Retry {retry_count}/{self.max_retries} after {delay}s: {e}")
+
+                yield AgentEvent(
+                    "retry",
+                    {
+                        "attempt": retry_count,
+                        "max_retries": self.max_retries,
+                        "delay": delay,
+                        "error": str(e),
                     },
-                }
-                for tool in tools
-            ]
+                )
 
-        # Stream response
-        accumulated_text = ""
+                await asyncio.sleep(delay)
 
-        stream = await client.chat.completions.create(
-            model=model, max_tokens=max_tokens, messages=messages, tools=tools_param, stream=True
-        )
 
-        async for chunk in stream:
-            if chunk.choices:
-                choice = chunk.choices[0]
-                if choice.delta.content:
-                    text = choice.delta.content
-                    accumulated_text += text
-                    yield AgentEvent("assistant", {"delta": {"type": "text_delta", "text": text}})
-
-                # Handle tool calls
-                if choice.delta.tool_calls:
-                    for tool_call in choice.delta.tool_calls:
-                        # TODO: Accumulate tool call data and execute
-                        pass
+# Alias for backward compatibility
+AgentRuntime = MultiProviderRuntime

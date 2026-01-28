@@ -270,7 +270,7 @@ __all__ = [..., "YourProvider"]
 ```
 
 ```python
-# 3. Update runtime_new.py
+# 3. Update runtime.py
 elif provider_name == "your-provider":
     return YourProvider(**kwargs)
 ```
@@ -463,7 +463,7 @@ make test-integration
 ```python
 # Good test example
 import pytest
-from clawdbot.agents.runtime_new import MultiProviderRuntime
+from clawdbot.agents.runtime import MultiProviderRuntime
 
 @pytest.mark.asyncio
 async def test_gemini_provider_initialization():

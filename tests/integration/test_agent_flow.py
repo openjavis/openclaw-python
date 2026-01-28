@@ -23,14 +23,17 @@ class TestAgentFlow:
         runtime = AgentRuntime(enable_context_management=True)
         session = Session("test-flow", temp_workspace)
 
-        # Mock the LLM response
-        with patch.object(runtime, "_run_anthropic") as mock_anthropic:
+        # Mock the provider's stream method
+        with patch.object(runtime.provider, "stream") as mock_stream:
 
-            async def mock_response(*args):
-                yield AgentEvent("assistant", {"delta": {"text": "Hello! "}})
-                yield AgentEvent("assistant", {"delta": {"text": "I am ClawdBot."}})
+            async def mock_response(*args, **kwargs):
+                # Create mock LLMResponse objects
+                from clawdbot.agents.providers.base import LLMResponse
+                yield LLMResponse(type="text_delta", content="Hello! ")
+                yield LLMResponse(type="text_delta", content="I am ClawdBot.")
+                yield LLMResponse(type="done", content=None)
 
-            mock_anthropic.return_value = mock_response()
+            mock_stream.return_value = mock_response()
 
             response_parts = []
             async for event in runtime.run_turn(session, "Hello"):
@@ -49,12 +52,12 @@ class TestAgentFlow:
         runtime = AgentRuntime()
         session = Session("multi-turn", temp_workspace)
 
-        with patch.object(runtime, "_run_anthropic") as mock:
+        with patch.object(runtime.provider, "stream") as mock:
             # Turn 1
-            async def response1(*args):
-                yield AgentEvent("assistant", {"delta": {"text": "Response 1"}})
-                # Simulate adding assistant message
-                session.add_assistant_message("Response 1")
+            async def response1(*args, **kwargs):
+                from clawdbot.agents.providers.base import LLMResponse
+                yield LLMResponse(type="text_delta", content="Response 1")
+                yield LLMResponse(type="done", content=None)
 
             mock.return_value = response1()
 
@@ -62,18 +65,18 @@ class TestAgentFlow:
                 pass
 
             # Turn 2
-            async def response2(*args):
-                yield AgentEvent("assistant", {"delta": {"text": "Response 2"}})
-                # Simulate adding assistant message
-                session.add_assistant_message("Response 2")
+            async def response2(*args, **kwargs):
+                from clawdbot.agents.providers.base import LLMResponse
+                yield LLMResponse(type="text_delta", content="Response 2")
+                yield LLMResponse(type="done", content=None)
 
             mock.return_value = response2()
 
             async for _ in runtime.run_turn(session, "Message 2"):
                 pass
 
-            # Should have 2 user messages (added by run_turn) + 2 assistant (added by mock)
-            assert len(session.messages) >= 2  # At minimum 2 user messages
+            # Should have 2 user messages + 2 assistant messages
+            assert len(session.messages) >= 2
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -107,10 +110,12 @@ class TestAgentFlow:
 
         initial_count = len(session.messages)
 
-        with patch.object(runtime, "_run_anthropic") as mock:
+        with patch.object(runtime.provider, "stream") as mock:
 
-            async def response(*args):
-                yield {"type": "assistant", "delta": {"text": "Pruned response"}}
+            async def response(*args, **kwargs):
+                from clawdbot.agents.providers.base import LLMResponse
+                yield LLMResponse(type="text_delta", content="Pruned response")
+                yield LLMResponse(type="done", content=None)
 
             mock.return_value = response()
 

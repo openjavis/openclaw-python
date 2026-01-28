@@ -22,7 +22,7 @@ ClawdBot Python now supports multiple LLM providers, allowing you to use differe
 Model format: `provider/model-name`
 
 ```python
-from clawdbot.agents.runtime_new import MultiProviderRuntime
+from clawdbot.agents.runtime import MultiProviderRuntime
 
 # Anthropic Claude
 runtime = MultiProviderRuntime("anthropic/claude-opus-4-5")
@@ -363,7 +363,7 @@ from clawdbot.agents.runtime import AgentRuntime
 runtime = AgentRuntime("anthropic/claude-opus")
 
 # New (all providers)
-from clawdbot.agents.runtime_new import MultiProviderRuntime
+from clawdbot.agents.runtime import MultiProviderRuntime
 runtime = MultiProviderRuntime("gemini/gemini-pro")
 ```
 
