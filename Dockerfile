@@ -1,58 +1,54 @@
-# ClawdBot Python - Secure Docker Image
-# Version: 0.3.0
+# ClawdBot Python - Production Docker Image
+# Version: 0.4.0
 
 FROM python:3.11-slim
 
-# Security: Run as non-root user
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv (as root, before switching users)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Create non-root user
 RUN useradd -m -u 1000 clawdbot && \
     mkdir -p /app /home/clawdbot/.clawdbot && \
     chown -R clawdbot:clawdbot /app /home/clawdbot
 
 WORKDIR /app
 
-# Install system dependencies (minimal)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy project files
-COPY --chown=clawdbot:clawdbot pyproject.toml ./
-COPY --chown=clawdbot:clawdbot README.md ./
-COPY --chown=clawdbot:clawdbot LICENSE ./
-COPY --chown=clawdbot:clawdbot clawdbot ./clawdbot/
-COPY --chown=clawdbot:clawdbot skills ./skills/
-COPY --chown=clawdbot:clawdbot extensions ./extensions/
-COPY --chown=clawdbot:clawdbot tests ./tests/
+# Copy dependency files first (for better caching)
+COPY --chown=clawdbot:clawdbot pyproject.toml uv.lock* README.md LICENSE ./
 
 # Switch to non-root user
 USER clawdbot
 
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Install dependencies using uv
+# Use --no-cache to avoid cache issues in Docker
+RUN uv venv && \
+    uv sync --no-cache --no-dev
 
-# Install Python dependencies with uv
-ENV PATH="/home/clawdbot/.local/bin:$PATH"
-RUN uv pip install --system fastapi uvicorn pydantic pydantic-settings \
-    websockets typer rich anthropic openai python-telegram-bot discord.py slack-sdk \
-    httpx aiofiles pyyaml pyjson5 python-dotenv aiosqlite playwright psutil pillow \
-    apscheduler lancedb pyarrow
+# Copy application code
+COPY --chown=clawdbot:clawdbot clawdbot ./clawdbot/
+COPY --chown=clawdbot:clawdbot skills ./skills/
+COPY --chown=clawdbot:clawdbot extensions ./extensions/
 
-# Install optional dependencies for demo
-RUN pip install --no-cache-dir --user \
-    duckduckgo-search \
-    playwright \
-    apscheduler \
-    psutil
+# Set PATH to use venv
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app:$PYTHONPATH" \
+    VIRTUAL_ENV="/app/.venv"
 
-# Expose ports (only what's needed)
+# Expose ports
 # 18789: Gateway WebSocket
 # 8080: Web UI (optional)
 EXPOSE 18789 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD python -c "import clawdbot; print('OK')" || exit 1
 
-# Default command (can be overridden)
+# Default command
 CMD ["python", "-m", "clawdbot.cli", "gateway", "start"]
