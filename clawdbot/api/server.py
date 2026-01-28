@@ -83,18 +83,8 @@ class ChannelSendResponse(BaseModel):
     success: bool
 
 
-# API key authentication
-async def verify_api_key(x_api_key: Optional[str] = Header(None)) -> str:
-    """Verify API key"""
-    # In production, check against real API keys
-    # For now, just check if provided
-    if not x_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key required",
-            headers={"WWW-Authenticate": "ApiKey"}
-        )
-    return x_api_key
+# Import authentication
+from ..auth import verify_api_key, get_api_key_manager, setup_auth_middleware
 
 
 @asynccontextmanager
@@ -146,6 +136,11 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    
+    # Setup authentication middleware
+    # Note: This adds API key validation and rate limiting to all endpoints
+    # except those in skip_auth_paths
+    setup_auth_middleware(app, enable_rate_limiting=True)
     
     # Add OpenAI-compatible router
     app.include_router(openai_router)

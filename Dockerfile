@@ -28,12 +28,15 @@ COPY --chown=clawdbot:clawdbot tests ./tests/
 # Switch to non-root user
 USER clawdbot
 
-# Install Python dependencies
-ENV PATH="/home/clawdbot/.local/bin:${PATH}"
-RUN pip install --no-cache-dir --user --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir --user fastapi uvicorn pydantic pydantic-settings \
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Install Python dependencies with uv
+ENV PATH="/home/clawdbot/.local/bin:$PATH"
+RUN uv pip install --system fastapi uvicorn pydantic pydantic-settings \
     websockets typer rich anthropic openai python-telegram-bot discord.py slack-sdk \
-    httpx aiofiles pyyaml pyjson5 python-dotenv aiosqlite
+    httpx aiofiles pyyaml pyjson5 python-dotenv aiosqlite playwright psutil pillow \
+    apscheduler lancedb pyarrow
 
 # Install optional dependencies for demo
 RUN pip install --no-cache-dir --user \

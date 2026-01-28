@@ -22,11 +22,12 @@ from ..session import SessionManager
 class ToolRegistry:
     """Registry of available tools"""
 
-    def __init__(self, session_manager: Optional[SessionManager] = None, channel_registry: Optional[Any] = None):
+    def __init__(self, session_manager: Optional['SessionManager'] = None, channel_registry: Optional[Any] = None):
         self._tools: dict[str, AgentTool] = {}
-        self._session_manager = session_manager or SessionManager()
+        self._session_manager = session_manager  # Must be provided when needed
         self._channel_registry = channel_registry
-        self._register_default_tools()
+        if session_manager:  # Only register tools that need session manager if provided
+            self._register_default_tools()
 
     def _register_default_tools(self) -> None:
         """Register default tools"""
@@ -108,6 +109,9 @@ class ToolRegistry:
 _global_registry = ToolRegistry()
 
 
-def get_tool_registry() -> ToolRegistry:
+def get_tool_registry(session_manager: Optional[Any] = None) -> ToolRegistry:
     """Get global tool registry"""
+    global _global_registry
+    if _global_registry is None:
+        _global_registry = ToolRegistry(session_manager=session_manager)
     return _global_registry

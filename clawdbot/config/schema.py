@@ -68,7 +68,7 @@ class AgentsConfig(BaseModel):
     """Agents configuration"""
 
     defaults: Optional[AgentDefaults] = Field(default=None)
-    list: Optional[list[AgentEntry]] = Field(default_factory=list)
+    agents: Optional[list[AgentEntry]] = Field(default_factory=list)
 
 
 class ChannelConfig(BaseModel):

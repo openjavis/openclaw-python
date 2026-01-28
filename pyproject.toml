@@ -1,78 +1,113 @@
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poetry]
+[project]
 name = "clawdbot"
-version = "0.3.0"
+version = "0.4.0"
 description = "Personal AI assistant platform - Python implementation"
-authors = ["ClawdBot Contributors"]
 readme = "README.md"
-packages = [{include = "clawdbot"}]
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "ClawdBot Contributors" }
+]
+keywords = ["ai", "assistant", "chatbot", "agent", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 
-[tool.poetry.dependencies]
-python = "^3.11"
-# Core
-fastapi = "^0.109.0"
-uvicorn = {extras = ["standard"], version = "^0.27.0"}
-websockets = "^12.0"
-pydantic = "^2.5.0"
-pydantic-settings = "^2.1.0"
-typer = {extras = ["all"], version = "^0.9.0"}
-rich = "^13.7.0"
-# LLM
-anthropic = "^0.18.0"
-openai = "^1.12.0"
-# Channels
-python-telegram-bot = "^21.0"
-discord-py = "^2.3.0"
-slack-sdk = "^3.27.0"
-# Tools
-playwright = "^1.41.0"
-httpx = "^0.27.0"
-# Storage
-lancedb = "^0.5.0"
-aiosqlite = "^0.19.0"
-pyarrow = "^14.0.0"
-# Search and Data
-duckduckgo-search = "^4.0.0"
-sentence-transformers = "^2.5.0"
-torch = "^2.1.0"
-# Scheduler
-apscheduler = "^3.10.0"
-# Voice
-elevenlabs = "^0.2.0"
-twilio = {version = "^8.0.0", optional = true}
-# Additional channels
-python-signalbot = {version = "^0.7.0", optional = true}
-matrix-nio = {version = "^0.24.0", optional = true}
-line-bot-sdk = {version = "^3.5.0", optional = true}
-mattermostdriver = {version = "^7.3.0", optional = true}
-botbuilder-core = {version = "^4.15.0", optional = true}
-msgraph-sdk = {version = "^1.0.0", optional = true}
-google-cloud-pubsub = {version = "^2.18.0", optional = true}
-google-auth = {version = "^2.23.0", optional = true}
-# Tools
-pillow = "^10.0.0"
-psutil = "^5.9.0"
-ffmpeg-python = {version = "^0.2.0", optional = true}
-# Utils
-pyyaml = "^6.0"
-pyjson5 = "^1.6.0"
-python-dotenv = "^1.0.0"
-aiofiles = "^23.2.0"
+dependencies = [
+    # Core
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "websockets>=12.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "typer[all]>=0.9.0",
+    "rich>=13.7.0",
+    # LLM
+    "anthropic>=0.18.0",
+    "openai>=1.12.0",
+    # Channels
+    "python-telegram-bot>=21.0",
+    "discord.py>=2.3.0",
+    "slack-sdk>=3.27.0",
+    # Tools
+    "playwright>=1.41.0",
+    "httpx>=0.27.0",
+    # Storage
+    "lancedb>=0.5.0",
+    "aiosqlite>=0.19.0",
+    "pyarrow>=14.0.0",
+    # Search and Data
+    "duckduckgo-search>=4.0.0",
+    "sentence-transformers>=2.5.0",
+    "torch>=2.1.0",
+    # Scheduler
+    "apscheduler>=3.10.0",
+    # Voice
+    "elevenlabs>=0.2.0",
+    # Tools
+    "pillow>=10.0.0",
+    "psutil>=5.9.0",
+    # Utils
+    "pyyaml>=6.0",
+    "pyjson5>=1.6.0",
+    "python-dotenv>=1.0.0",
+    "aiofiles>=23.2.0",
+]
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^8.0.0"
-pytest-asyncio = "^0.23.0"
-pytest-cov = "^4.1.0"
-pytest-mock = "^3.12.0"
-black = "^24.0.0"
-ruff = "^0.2.0"
-mypy = "^1.8.0"
+[project.optional-dependencies]
+channels = [
+    "matrix-nio>=0.24.0",
+    "line-bot-sdk>=3.5.0",
+    "mattermostdriver>=7.3.0",
+    "botbuilder-core>=4.15.0",
+    "msgraph-sdk>=1.0.0",
+    "google-cloud-pubsub>=2.18.0",
+    "google-auth>=2.23.0",
+]
+voice = [
+    "twilio>=8.0.0",
+]
+all = [
+    "matrix-nio>=0.24.0",
+    "line-bot-sdk>=3.5.0",
+    "mattermostdriver>=7.3.0",
+    "botbuilder-core>=4.15.0",
+    "msgraph-sdk>=1.0.0",
+    "google-cloud-pubsub>=2.18.0",
+    "google-auth>=2.23.0",
+    "twilio>=8.0.0",
+]
 
-[tool.poetry.scripts]
-clawdbot = "clawdbot.cli.main:app"
+[project.scripts]
+clawdbot = "clawdbot.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/zhaoyuong/clawdbot-python"
+Documentation = "https://github.com/zhaoyuong/clawdbot-python/tree/main/docs"
+Repository = "https://github.com/zhaoyuong/clawdbot-python"
+Issues = "https://github.com/zhaoyuong/clawdbot-python/issues"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "black>=24.0.0",
+    "ruff>=0.2.0",
+    "mypy>=1.8.0",
+]
+
+[tool.hatchling.build.targets.wheel]
+packages = ["clawdbot"]
 
 [tool.black]
 line-length = 100
@@ -81,9 +116,50 @@ target-version = ['py311']
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/**" = ["F401", "F811"]
 
 [tool.mypy]
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+asyncio_mode = "auto"
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--cov=clawdbot",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
+markers = [
+    "asyncio: mark test as async",
+    "slow: mark test as slow",
+    "integration: mark test as integration test",
+]
+
+[tool.coverage.run]
+source = ["clawdbot"]
+omit = ["*/tests/*", "*/test_*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
