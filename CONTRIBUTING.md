@@ -22,8 +22,8 @@ Thank you for your interest in contributing to ClawdBot Python! This document pr
 # 1. Fork the repository on GitHub
 
 # 2. Clone your fork
-git clone https://github.com/YOUR-USERNAME/clawdbot-python.git
-cd clawdbot-python
+git clone https://github.com/YOUR-USERNAME/openclaw-python.git
+cd openclaw-python
 
 # 3. Install uv (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -39,8 +39,8 @@ cp .env.example .env
 uv run pytest
 
 # 7. Check code quality
-uv run black --check clawdbot/ tests/
-uv run ruff check clawdbot/
+uv run black --check openclaw/ tests/
+uv run ruff check openclaw/
 ```
 
 ---
@@ -69,7 +69,7 @@ git checkout -b fix/bug-description
 uv run pytest
 
 # With coverage
-uv run pytest --cov=clawdbot --cov-report=html
+uv run pytest --cov=openclaw --cov-report=html
 
 # Specific test file
 uv run pytest tests/test_runtime.py -v
@@ -87,13 +87,13 @@ make test-fast      # Parallel execution
 
 ```bash
 # Format code
-uv run black clawdbot/ tests/ examples/
+uv run black openclaw/ tests/ examples/
 
 # Lint
-uv run ruff check clawdbot/ tests/
+uv run ruff check openclaw/ tests/
 
 # Type check
-uv run mypy clawdbot/ --ignore-missing-imports
+uv run mypy openclaw/ --ignore-missing-imports
 
 # Using Makefile
 make format         # Auto-format
@@ -240,11 +240,11 @@ git push origin feature/your-feature-name
 
 ### Adding a New LLM Provider
 
-See existing implementations in `clawdbot/agents/providers/`:
+See existing implementations in `openclaw/agents/providers/`:
 
 ```python
 # 1. Create provider file
-# clawdbot/agents/providers/your_provider.py
+# openclaw/agents/providers/your_provider.py
 
 from .base import LLMProvider, LLMResponse, LLMMessage
 
@@ -298,7 +298,7 @@ runtime = MultiProviderRuntime("your-provider/model-name")
 
 ```python
 # 1. Create channel file
-# clawdbot/channels/your_channel.py
+# openclaw/channels/your_channel.py
 
 from .base import ChannelPlugin
 from .connection import ConnectionManager, HealthChecker
@@ -348,7 +348,7 @@ from .your_channel import YourChannel
 
 ```python
 # 1. Create tool file
-# clawdbot/agents/tools/your_tool.py
+# openclaw/agents/tools/your_tool.py
 
 from .base import AgentTool, ToolResult
 
@@ -445,7 +445,7 @@ uv run pytest -m "not slow"
 uv run pytest -m integration
 
 # With coverage
-uv run pytest --cov=clawdbot --cov-report=html
+uv run pytest --cov=openclaw --cov-report=html
 open htmlcov/index.html
 
 # Parallel execution (faster)
@@ -463,7 +463,7 @@ make test-integration
 ```python
 # Good test example
 import pytest
-from clawdbot.agents.runtime import MultiProviderRuntime
+from openclaw.agents.runtime import MultiProviderRuntime
 
 @pytest.mark.asyncio
 async def test_gemini_provider_initialization():
@@ -630,14 +630,14 @@ All PRs trigger automated checks:
 make test lint
 
 # Or manually
-uv run pytest --cov=clawdbot
-uv run black --check clawdbot/ tests/
-uv run ruff check clawdbot/
-uv run mypy clawdbot/ --ignore-missing-imports
+uv run pytest --cov=openclaw
+uv run black --check openclaw/ tests/
+uv run ruff check openclaw/
+uv run mypy openclaw/ --ignore-missing-imports
 
 # Build Docker image
 make docker-build
-docker run --rm clawdbot-python:latest python -m pytest
+docker run --rm openclaw-python:latest python -m pytest
 ```
 
 ### Pre-commit Hooks (Optional)
@@ -740,8 +740,8 @@ Contributors are recognized through:
 
 - 📚 **Documentation**: `docs/` folder
 - 📝 **Examples**: `examples/` folder
-- 🐛 **Issues**: [GitHub Issues](https://github.com/zhaoyuong/clawdbot-python/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/zhaoyuong/clawdbot-python/discussions)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/zhaoyuong/openclaw-python/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/zhaoyuong/openclaw-python/discussions)
 
 ### Ask Questions
 

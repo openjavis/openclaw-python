@@ -14,7 +14,7 @@ class WorkspaceSettings:
     """
     Manage workspace-specific settings
 
-    Settings are stored in .clawdbot/settings.json within the workspace
+    Settings are stored in .openclaw/settings.json within the workspace
     and override global configuration values.
 
     Example:
@@ -41,7 +41,7 @@ class WorkspaceSettings:
             workspace_dir: Path to workspace directory
         """
         self.workspace_dir = workspace_dir
-        self.settings_dir = workspace_dir / ".clawdbot"
+        self.settings_dir = workspace_dir / ".openclaw"
         self.settings_file = self.settings_dir / "settings.json"
 
         # Create directory if needed
@@ -198,9 +198,9 @@ class SettingsManager:
         Initialize settings manager
 
         Args:
-            global_config_dir: Global config directory (defaults to ~/.clawdbot)
+            global_config_dir: Global config directory (defaults to ~/.openclaw)
         """
-        self.global_config_dir = global_config_dir or Path.home() / ".clawdbot"
+        self.global_config_dir = global_config_dir or Path.home() / ".openclaw"
         self.global_config_dir.mkdir(parents=True, exist_ok=True)
 
         self._workspace_settings: dict[Path, WorkspaceSettings] = {}

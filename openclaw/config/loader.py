@@ -10,9 +10,9 @@ from .schema import ClawdbotConfig
 
 def get_config_path() -> Path:
     """Get the config file path"""
-    config_dir = Path.home() / ".clawdbot"
+    config_dir = Path.home() / ".openclaw"
     config_dir.mkdir(exist_ok=True)
-    return config_dir / "clawdbot.json"
+    return config_dir / "openclaw.json"
 
 
 def load_config(config_path: Path | None = None) -> ClawdbotConfig:

@@ -92,7 +92,7 @@ class ProfileStore:
         Args:
             config_dir: Directory to store profile config
         """
-        self.config_dir = config_dir or Path.home() / ".clawdbot"
+        self.config_dir = config_dir or Path.home() / ".openclaw"
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.config_file = self.config_dir / "auth_profiles.json"
 

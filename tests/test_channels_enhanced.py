@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from clawdbot.channels.base import (
+from openclaw.channels.base import (
     ChannelCapabilities,
     ChannelPlugin,
     InboundMessage,
     OutboundMessage,
 )
-from clawdbot.channels.connection import (
+from openclaw.channels.connection import (
     ConnectionManager,
     ConnectionMetrics,
     ConnectionState,

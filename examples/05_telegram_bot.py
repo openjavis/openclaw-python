@@ -17,11 +17,11 @@ import asyncio
 import os
 from pathlib import Path
 
-from clawdbot.agents.runtime import AgentRuntime
-from clawdbot.agents.session import SessionManager
-from clawdbot.channels.base import InboundMessage
-from clawdbot.channels.enhanced_telegram import EnhancedTelegramChannel
-from clawdbot.monitoring import setup_logging
+from openclaw.agents.runtime import AgentRuntime
+from openclaw.agents.session import SessionManager
+from openclaw.channels.base import InboundMessage
+from openclaw.channels.enhanced_telegram import EnhancedTelegramChannel
+from openclaw.monitoring import setup_logging
 
 
 async def main():

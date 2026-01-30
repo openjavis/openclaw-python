@@ -11,7 +11,7 @@ ClawdBot Python使用**自研的Agent Runtime**实现，而不是依赖外部Age
 ### 核心组件
 
 ```
-clawdbot/agents/
+openclaw/agents/
 ├── runtime.py        # Agent运行时核心
 ├── session.py        # 会话管理
 └── tools/           # 工具系统
@@ -96,7 +96,7 @@ class Session:
 - 工具调用记录
 - 会话状态管理
 
-**存储位置**: `~/.clawdbot/sessions/{session_id}/transcript.jsonl`
+**存储位置**: `~/.openclaw/sessions/{session_id}/transcript.jsonl`
 
 ### Message类型
 
@@ -257,9 +257,9 @@ AgentEvent类型:
 ### 基础使用
 
 ```python
-from clawdbot.agents.runtime import AgentRuntime
-from clawdbot.agents.session import Session
-from clawdbot.agents.tools.bash import BashTool
+from openclaw.agents.runtime import AgentRuntime
+from openclaw.agents.session import Session
+from openclaw.agents.tools.bash import BashTool
 
 # 创建运行时
 runtime = AgentRuntime(

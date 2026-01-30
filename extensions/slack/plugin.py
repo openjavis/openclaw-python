@@ -1,7 +1,7 @@
 """Slack channel plugin"""
 
-from clawdbot.channels.registry import get_channel_registry
-from clawdbot.channels.slack import SlackChannel
+from openclaw.channels.registry import get_channel_registry
+from openclaw.channels.slack import SlackChannel
 
 
 def register(api):

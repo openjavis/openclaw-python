@@ -82,8 +82,8 @@ poetry run python examples/05_telegram_bot.py
 ### Creating an Agent
 
 ```python
-from clawdbot.agents.runtime import AgentRuntime
-from clawdbot.agents.session import Session
+from openclaw.agents.runtime import AgentRuntime
+from openclaw.agents.session import Session
 
 runtime = AgentRuntime(model="anthropic/claude-sonnet-4-20250514")
 session = Session("my-session", Path("./workspace"))
@@ -96,8 +96,8 @@ async for event in runtime.run_turn(session, "Hello!"):
 ### Using Tools
 
 ```python
-from clawdbot.agents.tools.bash import BashTool
-from clawdbot.agents.tools.base import ToolConfig, ToolPermission
+from openclaw.agents.tools.bash import BashTool
+from openclaw.agents.tools.base import ToolConfig, ToolPermission
 
 tool = BashTool()
 tool.configure(ToolConfig(
@@ -112,7 +112,7 @@ async for event in runtime.run_turn(session, "List files", tools=[tool]):
 ### Starting API Server
 
 ```python
-from clawdbot.api import run_api_server
+from openclaw.api import run_api_server
 
 await run_api_server(host="0.0.0.0", port=8000)
 ```
@@ -130,7 +130,7 @@ echo $ANTHROPIC_API_KEY  # Should not be empty
 
 Make sure you're in the project directory and dependencies are installed:
 ```bash
-cd clawdbot-python
+cd openclaw-python
 poetry install
 ```
 

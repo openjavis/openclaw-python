@@ -10,7 +10,7 @@ from .channels_cmd import channels_app
 from .gateway_cmd import gateway_app
 
 app = typer.Typer(
-    name="clawdbot", help="ClawdBot - Personal AI Assistant Platform", no_args_is_help=True
+    name="openclaw", help="ClawdBot - Personal AI Assistant Platform", no_args_is_help=True
 )
 
 console = Console()
@@ -94,9 +94,9 @@ def onboard() -> None:
 
     console.print("\n[green]✓ Configuration saved![/green]")
     console.print("\nNext steps:")
-    console.print("1. Start the gateway: [cyan]clawdbot gateway start[/cyan]")
-    console.print("2. Configure channels: [cyan]clawdbot channels login telegram[/cyan]")
-    console.print("3. Run agent: [cyan]clawdbot agent run 'Hello!'[/cyan]")
+    console.print("1. Start the gateway: [cyan]openclaw gateway start[/cyan]")
+    console.print("2. Configure channels: [cyan]openclaw channels login telegram[/cyan]")
+    console.print("3. Run agent: [cyan]openclaw agent run 'Hello!'[/cyan]")
 
 
 @app.command()

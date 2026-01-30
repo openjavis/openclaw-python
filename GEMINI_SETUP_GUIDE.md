@@ -32,8 +32,8 @@ import asyncio
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from clawdbot.agents.providers.gemini_provider import GeminiProvider
-from clawdbot.agents.providers.base import LLMMessage
+from openclaw.agents.providers.gemini_provider import GeminiProvider
+from openclaw.agents.providers.base import LLMMessage
 
 # 加载 .env
 load_dotenv()

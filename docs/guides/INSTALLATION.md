@@ -22,7 +22,7 @@ Complete installation guide for ClawdBot Python v0.3.0
 curl -sSL https://install.python-poetry.org | python3 -
 
 # Install ClawdBot
-cd clawdbot-python
+cd openclaw-python
 poetry install
 
 # Activate environment
@@ -32,14 +32,14 @@ poetry shell
 ### Method 2: pip
 
 ```bash
-cd clawdbot-python
+cd openclaw-python
 pip install -e .
 ```
 
 ### Method 3: pip with all features
 
 ```bash
-cd clawdbot-python
+cd openclaw-python
 pip install -e ".[all]"
 ```
 
@@ -92,10 +92,10 @@ pip install google-cloud-pubsub google-auth
 ### 1. Run Onboarding
 
 ```bash
-clawdbot onboard
+openclaw onboard
 ```
 
-Creates `~/.clawdbot/clawdbot.json` with default config.
+Creates `~/.openclaw/openclaw.json` with default config.
 
 ### 2. Set API Keys
 
@@ -111,7 +111,7 @@ echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.bashrc
 
 ### 3. Configure Channels
 
-Edit `~/.clawdbot/clawdbot.json`:
+Edit `~/.openclaw/openclaw.json`:
 
 ```json
 {
@@ -139,10 +139,10 @@ Edit `~/.clawdbot/clawdbot.json`:
 ### Check Installation
 
 ```bash
-clawdbot --version
+openclaw --version
 # Should show: 0.3.0
 
-clawdbot doctor
+openclaw doctor
 # Verifies installation and config
 ```
 
@@ -226,8 +226,8 @@ playwright install chromium
 
 1. Read [QUICKSTART.md](QUICKSTART.md)
 2. Configure channels you need
-3. Start gateway: `clawdbot gateway start`
-4. Test: `clawdbot agent run "Hello!"`
+3. Start gateway: `openclaw gateway start`
+4. Test: `openclaw agent run "Hello!"`
 
 ---
 

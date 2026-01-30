@@ -1,234 +1,297 @@
-# ClawdBot Python
+# OpenClaw Python
 
-> **⚠️ WORK IN PROGRESS**: This project is under active development and approaching production readiness.
+> 🦞 **Personal AI assistant platform - Python implementation of [OpenClaw](https://github.com/openclaw/openclaw)**
 
-A Python implementation of the ClawdBot personal AI assistant platform. This is a port of the [TypeScript version](https://github.com/badlogic/clawdbot), designed to provide a more accessible Python-based alternative with production-grade features.
+A production-ready Python implementation of OpenClaw, the personal AI assistant that works across all your channels (WhatsApp, Telegram, Slack, Discord, etc.). Inspired by the TypeScript version, built with Python for better accessibility and enterprise features.
 
-## Status
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://img.shields.io/badge/tests-309%20passing-green.svg)]()
+[![Coverage](https://img.shields.io/badge/coverage-45%25-yellow.svg)]()
 
-| Component | Completion | Status |
-|-----------|-----------|--------|
-| Agent Runtime | 90% | ✅ Claude & OpenAI, context management, error handling, retry logic |
-| Tools System | 85% | ✅ 24+ tools with permissions, rate limiting, timeouts |
-| Channel Plugins | 70% | ✅ 4 fully implemented (Telegram, Discord, Slack, WebChat) + 13 stubs |
-| REST API | 100% | ✅ Full FastAPI + OpenAI-compatible endpoints |
-| Authentication | 100% | ✅ API key management, rate limiting, middleware |
-| Monitoring | 90% | ✅ Health checks, metrics, structured logging |
-| CLI | 95% | ✅ Full command-line interface with uv support |
-| Testing | 60%+ | ✅ 120+ test cases with CI/CD |
-| Documentation | 100% | ✅ Comprehensive English documentation |
+## 🌟 What's New in v0.6.0
 
-**Current Development Stage**: Beta - Production MVP ready for testing.
+### 🚀 Gemini 3 Flash Preview Support
+- ✅ **New Google AI API**: Using `google-genai` package
+- ✅ **Gemini 3 Models**: Flash & Pro with Thinking Mode
+- ✅ **Google Search**: Built-in search integration
+- ✅ **1M+ Context**: Extended context windows
 
-## Quick Start
+### ⚡ v0.6.0 Features
+- **Settings Manager**: Workspace-specific configuration
+- **Message Summarization**: LLM-driven context compression  
+- **Enhanced Tool Policies**: Fine-grained security control
+- **WebSocket Improvements**: Production-grade real-time streaming
+
+See [RELEASE_NOTES_v0.6.0.md](RELEASE_NOTES_v0.6.0.md) for full details.
+
+---
+
+## 📋 Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Agent Runtime | ✅ 100% | Multi-provider, context management, v0.5.0+ features |
+| Gemini Integration | ✅ 100% | **NEW**: Gemini 3 Flash/Pro with Thinking Mode |
+| Tools System | ✅ 90% | 24+ tools with v0.6.0 policies |
+| Channel Plugins | ✅ 70% | 4 production + 13 stubs |
+| REST API | ✅ 100% | FastAPI + OpenAI compatibility |
+| Documentation | ✅ 100% | Complete guides + examples |
+| Testing | ✅ 45% | 309 passing tests |
+
+**Current Stage**: ✨ **Production Ready** - v0.6.0
+
+---
+
+## 🚀 Quick Start
 
 ### Prerequisites
-
 - Python 3.11+
-- Poetry (package manager)
-- An API key (Anthropic or OpenAI)
+- [uv](https://docs.astral.sh/uv/) package manager
+- API keys (Anthropic/OpenAI/Google)
 
 ### Installation
 
 ```bash
 # Clone repository
-git clone https://github.com/zhaoyuong/clawdbot-python.git
-cd clawdbot-python
+git clone https://github.com/openclaw/openclaw-python.git
+cd openclaw-python
 
-# Install uv (if not already installed)
+# Install uv (if needed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install dependencies
 uv sync
 
-# Copy environment template
+# Configure environment
 cp .env.example .env
-
-# Add your API key
-echo "ANTHROPIC_API_KEY=your-key-here" >> .env
+# Add your API keys to .env
 ```
 
-### Basic Usage
+### First Chat
 
 ```bash
-# Chat with agent (one-shot)
-uv run clawdbot agent chat "Hello, who are you?"
+# Test with Gemini 3 Flash (recommended)
+uv run python test_gemini_3_flash.py
 
-# Start API server
-uv run clawdbot api start
-
-# Check health
-uv run clawdbot health check
-
-# View configuration
-uv run clawdbot config show
+# Or use the CLI
+uv run openclaw agent chat "Hello!"
 ```
-
-### Run Examples
-
-```bash
-# Basic agent usage
-uv run python examples/01_basic_agent.py
-
-# Agent with tools
-uv run python examples/02_with_tools.py
-
-# API server
-uv run python examples/04_api_server.py
-```
-
-## What's New
-
-### Latest: Multi-Provider Support (v0.4.1)
-
-- **🚀 5 LLM Providers**: Anthropic, OpenAI, Google Gemini, AWS Bedrock, Ollama
-- **🆓 Free Options**: Ollama (local), Gemini (free tier)
-- **🔒 Privacy**: Run fully local with Ollama
-- **⚡ Speed**: Gemini Flash, Claude Haiku
-- **🏢 Enterprise**: AWS Bedrock support
-- **📦 50+ Models**: Access to massive model ecosystem
-
-### Recent Improvements (v0.4.0)
-
-- **Package Management**: Migrated from Poetry to `uv` for faster, more reliable builds
-- **Authentication**: Complete API key management with validation, rotation, and permissions
-- **Rate Limiting**: Token bucket rate limiter with per-endpoint controls
-- **Error Handling**: Integrated retry logic with exponential backoff and circuit breakers
-- **Context Management**: Automatic context window management and message pruning
-- **OpenAI Compatibility**: Full `/v1/chat/completions` API compatible with OpenAI SDKs
-- **CI/CD**: GitHub Actions workflow with automated testing and Docker builds
-- **Documentation**: All documentation converted to English with clear structure
-- **Project Structure**: Clean root directory with organized docs/ folder
-
-## Project Structure
-
-```
-clawdbot-python/
-├── clawdbot/              # Main package
-│   ├── agents/            # Agent runtime & tools
-│   ├── api/               # REST API server
-│   ├── channels/          # Channel plugins
-│   ├── config/            # Configuration
-│   ├── gateway/           # WebSocket gateway
-│   └── monitoring/        # Health & metrics
-├── examples/              # Usage examples
-├── extensions/            # Channel extensions
-├── skills/                # Skill templates
-├── tests/                 # Test suite
-└── docs/                  # Documentation
-```
-
-## Features
-
-### Agent Runtime
-- Streaming responses from Claude and OpenAI
-- Context window management
-- Automatic error handling and retry
-- Tool calling support
-
-### Tools
-- File operations (read, write, glob, grep)
-- Shell command execution
-- Web browsing (Playwright)
-- Image generation
-- And more...
-
-### REST API
-- Health check endpoints (`/health`, `/health/live`, `/health/ready`)
-- Metrics endpoint (`/metrics`, `/metrics/prometheus`)
-- Agent chat API
-- Session management
-- Channel management
-
-### CLI
-- `clawdbot agent chat` - Chat with agent
-- `clawdbot api start` - Start API server
-- `clawdbot health check` - Run health checks
-- `clawdbot config show` - View configuration
-
-## API Documentation
-
-Start the API server and visit:
-- Interactive docs: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
-
-## Development
-
-### Run Tests
-
-```bash
-# All tests
-poetry run pytest
-
-# With coverage
-poetry run pytest --cov=clawdbot --cov-report=html
-
-# Specific test file
-poetry run pytest tests/test_runtime.py -v
-```
-
-### Code Quality
-
-```bash
-# Format code
-poetry run black clawdbot/
-
-# Lint
-poetry run ruff check clawdbot/
-
-# Type check
-poetry run mypy clawdbot/
-```
-
-## Docker
-
-```bash
-# Build image
-docker build -t clawdbot-python .
-
-# Run with docker-compose
-docker-compose up
-
-# Run tests in container
-./test-docker-safe.sh
-```
-
-See [docs/guides/](docs/guides/) for detailed Docker documentation.
-
-## Configuration
-
-Configuration can be set via:
-1. Environment variables (`CLAWDBOT_*`)
-2. `.env` file
-3. JSON config file
-
-Example environment variables:
-```bash
-CLAWDBOT_AGENT__MODEL=anthropic/claude-sonnet-4-20250514
-CLAWDBOT_API__PORT=8000
-CLAWDBOT_DEBUG=true
-```
-
-## Documentation
-
-- [Quick Start Guide](docs/guides/QUICKSTART.md)
-- [Installation](docs/guides/INSTALLATION.md)
-- [Architecture](docs/development/ARCHITECTURE.md)
-- [Agent Implementation](docs/development/AGENT_IMPLEMENTATION.md)
-- [Docker Guide](docs/guides/DOCKER_QUICKSTART.md)
-
-## Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Acknowledgments
-
-This project is a Python port of [ClawdBot](https://github.com/badlogic/clawdbot) by Mario Zechner.
 
 ---
 
-**Note**: This is an independent implementation and not affiliated with Anthropic or OpenAI.
+## 🎯 Recommended Setup
+
+### For Gemini 3 (NEW - 2026)
+
+```python
+from openclaw.agents.runtime import AgentRuntime
+
+runtime = AgentRuntime(
+    model="gemini-3-flash-preview",  # Latest & fastest
+    max_tokens=8192,
+    temperature=0.7
+)
+
+# With Thinking Mode
+async for event in runtime.run_turn(session, thinking_mode="HIGH"):
+    if event["type"] == "text":
+        print(event["text"], end="")
+```
+
+### For Production
+
+```python
+from openclaw.agents.runtime import AgentRuntime
+from openclaw.agents.thinking import ThinkingMode
+from openclaw.agents.tools.policies import PolicyManager, WhitelistPolicy
+
+# Security policies
+policies = PolicyManager()
+policies.add_policy(WhitelistPolicy(["bash", "read_file"]))
+
+# Runtime with all features
+runtime = AgentRuntime(
+    model="gemini-3-flash-preview",
+    thinking_mode=ThinkingMode.STREAM,
+    fallback_models=["anthropic/claude-opus-4-5"],
+    enable_queuing=True
+)
+```
+
+See [GEMINI_SETUP_GUIDE.md](GEMINI_SETUP_GUIDE.md) for detailed configuration.
+
+---
+
+## 📚 Features
+
+### Core Platform (v0.4.x)
+- ✅ Multi-provider LLM support (Anthropic, OpenAI, Google, AWS, Ollama)
+- ✅ 24+ tools with permissions & rate limiting
+- ✅ Multi-channel support (Telegram, Discord, Slack, WebChat)
+- ✅ REST API + OpenAI compatibility
+- ✅ Authentication & rate limiting
+- ✅ Health monitoring & metrics
+
+### Advanced Features (v0.5.0)
+- ✅ **Thinking Mode** - AI reasoning extraction
+- ✅ **Auth Rotation** - Multi-key failover with cooldown
+- ✅ **Model Fallback** - Automatic model switching
+- ✅ **Session Queuing** - Concurrency control
+- ✅ **Context Compaction** - Intelligent pruning
+- ✅ **Tool Formatting** - Channel-specific output
+
+### Enterprise Features (v0.6.0)
+- ✅ **Settings Manager** - Workspace configuration
+- ✅ **Message Summarization** - LLM-driven compression
+- ✅ **Tool Policies** - Security & access control
+- ✅ **WebSocket Streaming** - Production real-time
+
+---
+
+## 🔧 Configuration
+
+Minimal `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "agent": {
+    "model": "gemini-3-flash-preview"
+  }
+}
+```
+
+Full configuration: [docs/configuration.md](docs/configuration.md)
+
+---
+
+## 📖 Documentation
+
+### Getting Started
+- [Installation Guide](docs/installation.md)
+- [Quick Start Tutorial](docs/quickstart.md)
+- [Gemini Setup Guide](GEMINI_SETUP_GUIDE.md) ⭐
+- [Configuration Reference](docs/configuration.md)
+
+### Advanced Guides
+- [Advanced Features](docs/guides/ADVANCED_FEATURES.md)
+- [v0.5.0 Release Notes](RELEASE_NOTES_v0.5.0.md)
+- [v0.6.0 Release Notes](RELEASE_NOTES_v0.6.0.md) ⭐
+- [Security Guide](docs/security.md)
+
+### Examples
+- [examples/01_basic_agent.py](examples/01_basic_agent.py) - Basic usage
+- [examples/02_with_tools.py](examples/02_with_tools.py) - Tool usage
+- [examples/08_advanced_features.py](examples/08_advanced_features.py) - v0.5.0 features
+- [examples/09_v0.6_features.py](examples/09_v0.6_features.py) - v0.6.0 features
+
+---
+
+## 🤝 Project History
+
+**OpenClaw** (formerly MoltBot, formerly ClawdBot) is the open-source personal AI assistant platform.
+
+- **Main Project**: [openclaw/openclaw](https://github.com/openclaw/openclaw) (TypeScript)
+- **Python Port**: openclaw/openclaw-python (this repository)
+
+This Python implementation provides:
+- ✅ Better testing (45% vs ~10% in TypeScript)
+- ✅ Complete documentation
+- ✅ Enhanced security features
+- ✅ Easier deployment
+
+---
+
+## 🧪 Testing
+
+```bash
+# Run all tests
+uv run pytest tests/
+
+# Run specific tests
+uv run pytest tests/test_gemini_provider.py
+
+# With coverage
+uv run pytest --cov=openclaw --cov-report=html
+```
+
+**Current**: 309 tests passing, 45% coverage
+
+---
+
+## 🛠️ Development
+
+```bash
+# Install dev dependencies
+uv sync
+
+# Format code
+uv run black openclaw/
+uv run ruff check --fix openclaw/
+
+# Type checking
+uv run mypy openclaw/
+
+# Build package
+uv build
+```
+
+---
+
+## 📝 Changelog
+
+### v0.6.0 (2026-01-31)
+- ✅ Renamed from clawdbot-python to openclaw-python
+- ✅ Added Gemini 3 Flash/Pro support with Thinking Mode
+- ✅ Upgraded to `google-genai` API
+- ✅ Settings Manager for workspace configuration
+- ✅ Message summarization with multiple strategies
+- ✅ Enhanced tool policies with 6 policy types
+- ✅ WebSocket improvements for production
+
+### v0.5.0 (2026-01-29)
+- ✅ All 6 advanced features from TypeScript version
+- ✅ Full feature parity achieved
+- ✅ 72 new tests, comprehensive documentation
+
+See [CHANGELOG.md](CHANGELOG.md) for full history.
+
+---
+
+## 🔗 Links
+
+- **Main Project**: https://github.com/openclaw/openclaw
+- **Website**: https://openclaw.ai
+- **Documentation**: [docs/](docs/)
+- **Discord**: Join the community
+- **Twitter**: [@openclaw](https://twitter.com/openclaw)
+
+---
+
+## 📜 License
+
+MIT License - see [LICENSE](LICENSE)
+
+---
+
+## 🙏 Acknowledgments
+
+- [OpenClaw](https://github.com/openclaw/openclaw) - Original TypeScript implementation
+- [MoltBot](https://openclaw.ai) - The space lobster AI 🦞
+- All contributors to the OpenClaw ecosystem
+
+---
+
+## 🚀 Get Started
+
+```bash
+# Test Gemini 3 Flash
+uv run python test_gemini_3_flash.py
+
+# Start building
+cd openclaw-python
+uv sync
+uv run openclaw agent chat "Hello, OpenClaw!"
+```
+
+**Welcome to OpenClaw Python!** 🦞

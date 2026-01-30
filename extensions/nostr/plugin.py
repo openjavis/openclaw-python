@@ -1,7 +1,7 @@
 """nostr channel plugin"""
 
-from clawdbot.channels.nostr import NostrChannel
-from clawdbot.channels.registry import get_channel_registry
+from openclaw.channels.nostr import NostrChannel
+from openclaw.channels.registry import get_channel_registry
 
 
 def register(api):

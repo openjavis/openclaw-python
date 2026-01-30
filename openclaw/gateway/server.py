@@ -110,7 +110,7 @@ class GatewayConnection:
             # Send hello response
             hello = HelloResponse(
                 protocol=negotiated_protocol,
-                server={"name": "clawdbot-python", "version": "0.1.0", "platform": "python"},
+                server={"name": "openclaw-python", "version": "0.1.0", "platform": "python"},
                 features={
                     "agent": True,
                     "chat": True,

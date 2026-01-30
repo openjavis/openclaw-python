@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from clawdbot.agents.tools.base import (
+from openclaw.agents.tools.base import (
     AgentTool,
     ToolConfig,
     ToolMetrics,

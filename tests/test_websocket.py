@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from clawdbot.api.websocket import (
+from openclaw.api.websocket import (
     ConnectionState,
     MessageType,
     WebSocketConnection,

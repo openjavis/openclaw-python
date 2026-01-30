@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from clawdbot.agents.session import Message, Session, SessionManager
+from openclaw.agents.session import Message, Session, SessionManager
 
 
 class TestMessage:

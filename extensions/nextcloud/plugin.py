@@ -1,7 +1,7 @@
 """nextcloud channel plugin"""
 
-from clawdbot.channels.nextcloud import NextcloudChannel
-from clawdbot.channels.registry import get_channel_registry
+from openclaw.channels.nextcloud import NextcloudChannel
+from openclaw.channels.registry import get_channel_registry
 
 
 def register(api):

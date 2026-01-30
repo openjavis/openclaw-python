@@ -14,12 +14,12 @@ import asyncio
 import os
 from pathlib import Path
 
-from clawdbot.agents.auth import AuthProfile
-from clawdbot.agents.compaction import CompactionStrategy
-from clawdbot.agents.formatting import FormatMode
-from clawdbot.agents.runtime import AgentRuntime
-from clawdbot.agents.session import Session
-from clawdbot.agents.thinking import ThinkingMode
+from openclaw.agents.auth import AuthProfile
+from openclaw.agents.compaction import CompactionStrategy
+from openclaw.agents.formatting import FormatMode
+from openclaw.agents.runtime import AgentRuntime
+from openclaw.agents.session import Session
+from openclaw.agents.thinking import ThinkingMode
 
 
 async def demo_thinking_mode():

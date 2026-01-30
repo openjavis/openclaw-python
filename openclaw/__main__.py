@@ -1,5 +1,5 @@
 """
-Entry point for python -m clawdbot
+Entry point for python -m openclaw
 """
 
 from .cli.main import app

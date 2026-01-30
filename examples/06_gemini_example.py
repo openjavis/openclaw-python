@@ -7,8 +7,8 @@ This example demonstrates how to use Google Gemini models with ClawdBot.
 import asyncio
 import os
 
-from clawdbot.agents.runtime import MultiProviderRuntime
-from clawdbot.agents.session import Session
+from openclaw.agents.runtime import MultiProviderRuntime
+from openclaw.agents.session import Session
 
 
 async def main():

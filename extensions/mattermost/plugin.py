@@ -1,7 +1,7 @@
 """mattermost channel plugin"""
 
-from clawdbot.channels.mattermost import MattermostChannel
-from clawdbot.channels.registry import get_channel_registry
+from openclaw.channels.mattermost import MattermostChannel
+from openclaw.channels.registry import get_channel_registry
 
 
 def register(api):

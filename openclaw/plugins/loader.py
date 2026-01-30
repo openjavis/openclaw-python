@@ -30,7 +30,7 @@ class PluginLoader:
                     plugin_dirs.append(item)
 
         # User plugins
-        user_dir = Path.home() / ".clawdbot" / "extensions"
+        user_dir = Path.home() / ".openclaw" / "extensions"
         if user_dir.exists():
             for item in user_dir.iterdir():
                 if item.is_dir() and (item / "plugin.json").exists():
@@ -75,7 +75,7 @@ class PluginLoader:
         try:
             # Create module spec
             spec = importlib.util.spec_from_file_location(
-                f"clawdbot_plugin_{plugin.manifest.id}", module_file
+                f"openclaw_plugin_{plugin.manifest.id}", module_file
             )
 
             if spec and spec.loader:

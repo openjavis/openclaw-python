@@ -4,7 +4,7 @@ Tests for tool result formatting
 
 import pytest
 
-from clawdbot.agents.formatting import FormatMode, ToolFormatter
+from openclaw.agents.formatting import FormatMode, ToolFormatter
 
 
 class TestFormatMode:

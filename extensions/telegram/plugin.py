@@ -1,7 +1,7 @@
 """Telegram channel plugin"""
 
-from clawdbot.channels.registry import get_channel_registry
-from clawdbot.channels.telegram import TelegramChannel
+from openclaw.channels.registry import get_channel_registry
+from openclaw.channels.telegram import TelegramChannel
 
 
 def register(api):

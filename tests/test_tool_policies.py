@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timezone
 
 import pytest
 
-from clawdbot.agents.tools.policies import (
+from openclaw.agents.tools.policies import (
     ApprovalRequiredPolicy,
     ArgumentValidationPolicy,
     BlacklistPolicy,

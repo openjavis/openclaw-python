@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from clawdbot.agents.auth import AuthProfile, ProfileStore, RotationManager
+from openclaw.agents.auth import AuthProfile, ProfileStore, RotationManager
 
 
 class TestAuthProfile:

@@ -41,7 +41,7 @@ LLM-driven conversation summarization for intelligent context management.
 #### Usage
 
 ```python
-from clawdbot.agents.summarization import MessageSummarizer, SummarizationStrategy
+from openclaw.agents.summarization import MessageSummarizer, SummarizationStrategy
 
 # Create summarizer
 summarizer = MessageSummarizer(llm_provider)
@@ -124,7 +124,7 @@ policy = ApprovalRequiredPolicy(["execute_code", "deploy"])
 #### Usage
 
 ```python
-from clawdbot.agents.tools.policies import PolicyManager
+from openclaw.agents.tools.policies import PolicyManager
 
 # Create manager
 manager = PolicyManager()
@@ -193,7 +193,7 @@ Production-grade WebSocket implementation with reliability features.
 #### Usage
 
 ```python
-from clawdbot.api.websocket import (
+from openclaw.api.websocket import (
     WebSocketConnection,
     WebSocketManager,
     WebSocketMessage,
@@ -323,7 +323,7 @@ All new features are **opt-in** and backward compatible:
 runtime = AgentRuntime("anthropic/claude-opus-4-5")
 
 # Add v0.6.0 features as needed
-from clawdbot.agents.tools.policies import PolicyManager, WhitelistPolicy
+from openclaw.agents.tools.policies import PolicyManager, WhitelistPolicy
 
 policy_manager = PolicyManager()
 policy_manager.add_policy(WhitelistPolicy(["bash", "read_file"]))
@@ -338,13 +338,13 @@ for tool in tools:
 
 ```python
 from pathlib import Path
-from clawdbot.agents.runtime import AgentRuntime
-from clawdbot.agents.thinking import ThinkingMode
-from clawdbot.agents.compaction import CompactionStrategy
-from clawdbot.agents.formatting import FormatMode
-from clawdbot.agents.summarization import MessageSummarizer, SummarizationStrategy
-from clawdbot.agents.tools.policies import PolicyManager, WhitelistPolicy, RateLimitPolicy
-from clawdbot.config.settings_manager import WorkspaceSettings
+from openclaw.agents.runtime import AgentRuntime
+from openclaw.agents.thinking import ThinkingMode
+from openclaw.agents.compaction import CompactionStrategy
+from openclaw.agents.formatting import FormatMode
+from openclaw.agents.summarization import MessageSummarizer, SummarizationStrategy
+from openclaw.agents.tools.policies import PolicyManager, WhitelistPolicy, RateLimitPolicy
+from openclaw.config.settings_manager import WorkspaceSettings
 
 # Workspace settings
 settings = WorkspaceSettings(Path("."))
@@ -481,7 +481,7 @@ policies.add_policy(ArgumentValidationPolicy({
 ### Upgrade
 
 ```bash
-cd clawdbot-python
+cd openclaw-python
 git pull origin main
 uv sync
 ```
@@ -489,8 +489,8 @@ uv sync
 ### Fresh Install
 
 ```bash
-git clone https://github.com/zhaoyuong/clawdbot-python.git
-cd clawdbot-python
+git clone https://github.com/zhaoyuong/openclaw-python.git
+cd openclaw-python
 uv sync
 ```
 
@@ -530,7 +530,7 @@ uv sync
 
 - **Documentation**: [docs/](docs/)
 - **Examples**: [examples/](examples/)
-- **Issues**: https://github.com/zhaoyuong/clawdbot-python/issues
+- **Issues**: https://github.com/zhaoyuong/openclaw-python/issues
 
 ---
 

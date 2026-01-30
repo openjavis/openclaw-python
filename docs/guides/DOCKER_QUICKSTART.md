@@ -83,7 +83,7 @@ git check-ignore .env  # 应该显示 .env
 netstat -tlnp | grep 18789  # 应该显示 127.0.0.1:18789
 
 # 3. 检查用户权限
-docker-compose run --rm clawdbot whoami  # 应该显示 clawdbot
+docker-compose run --rm openclaw whoami  # 应该显示 openclaw
 
 # 4. 定期更新镜像
 docker-compose build --no-cache
@@ -104,7 +104,7 @@ CLAWDBOT_ENV=demo
 EOF
 
 # 运行状态检查（不需要真实密钥）
-docker-compose run --rm clawdbot python -m clawdbot.cli status
+docker-compose run --rm openclaw python -m openclaw.cli status
 
 # 清理
 rm .env
@@ -137,7 +137,7 @@ docker-compose down
 **A**: 修改docker-compose.yml：
 ```yaml
 networks:
-  clawdbot-net:
+  openclaw-net:
     internal: true  # 完全隔离，无互联网访问
 ```
 

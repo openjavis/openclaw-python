@@ -93,13 +93,13 @@ The ClawdBot Python project has been successfully completed to **Production MVP*
 ### 7. CLI (100%)
 **Complete CLI Interface**:
 ```bash
-clawdbot agent chat         # Interactive chat
-clawdbot agent list         # List agents
-clawdbot gateway start      # Start gateway
-clawdbot channels list      # List channels
-clawdbot init              # Project setup
-clawdbot status            # System status
-clawdbot config validate   # Config validation
+openclaw agent chat         # Interactive chat
+openclaw agent list         # List agents
+openclaw gateway start      # Start gateway
+openclaw channels list      # List channels
+openclaw init              # Project setup
+openclaw status            # System status
+openclaw config validate   # Config validation
 ```
 
 ### 8. Testing (98%)
@@ -197,8 +197,8 @@ clawdbot config validate   # Config validation
 ### Quick Start
 ```bash
 # Installation
-git clone https://github.com/zhaoyuong/clawdbot-python.git
-cd clawdbot-python
+git clone https://github.com/zhaoyuong/openclaw-python.git
+cd openclaw-python
 uv sync
 
 # Configuration
@@ -206,20 +206,20 @@ cp .env.example .env
 # Add your API keys
 
 # Run
-uv run python -m clawdbot.cli agent chat
+uv run python -m openclaw.cli agent chat
 ```
 
 ### Docker
 ```bash
-docker build -t clawdbot .
-docker run -e ANTHROPIC_API_KEY=xxx clawdbot
+docker build -t openclaw .
+docker run -e ANTHROPIC_API_KEY=xxx openclaw
 ```
 
 ### Production
 ```bash
 # With authentication
 export CLAWDBOT_API_KEY=your-secure-key
-uv run python -m clawdbot.api
+uv run python -m openclaw.api
 ```
 
 ---
@@ -278,9 +278,9 @@ uv run python -m clawdbot.api
 
 ## 🔗 Resources
 
-- **Repository**: https://github.com/zhaoyuong/clawdbot-python
-- **CI/CD**: https://github.com/zhaoyuong/clawdbot-python/actions
-- **Issues**: https://github.com/zhaoyuong/clawdbot-python/issues
+- **Repository**: https://github.com/zhaoyuong/openclaw-python
+- **CI/CD**: https://github.com/zhaoyuong/openclaw-python/actions
+- **Issues**: https://github.com/zhaoyuong/openclaw-python/issues
 - **Contributing**: See CONTRIBUTING.md
 
 ---

@@ -1,7 +1,7 @@
 """zalo channel plugin"""
 
-from clawdbot.channels.registry import get_channel_registry
-from clawdbot.channels.zalo import ZaloChannel
+from openclaw.channels.registry import get_channel_registry
+from openclaw.channels.zalo import ZaloChannel
 
 
 def register(api):

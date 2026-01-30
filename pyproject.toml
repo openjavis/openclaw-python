@@ -3,21 +3,21 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["clawdbot"]
+packages = ["openclaw"]
 
 [project]
-name = "clawdbot"
-version = "0.4.0"
-description = "Personal AI assistant platform - Python implementation"
+name = "openclaw-python"
+version = "0.6.0"
+description = "Personal AI assistant platform - Python implementation of OpenClaw"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
-    { name = "ClawdBot Contributors" }
+    { name = "OpenClaw Contributors" }
 ]
-keywords = ["ai", "assistant", "chatbot", "agent", "llm"]
+keywords = ["ai", "assistant", "chatbot", "agent", "llm", "openclaw", "personal-ai"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.11",
@@ -33,10 +33,10 @@ dependencies = [
     "pydantic-settings>=2.1.0",
     "typer[all]>=0.9.0",
     "rich>=13.7.0",
-    # LLM
+    # LLM (Updated: google-genai for new API)
     "anthropic>=0.18.0",
     "openai>=1.12.0",
-    "google-generativeai>=0.3.0",
+    "google-genai>=0.2.0",  # New Gemini API
     "boto3>=1.34.0",  # AWS Bedrock
     # Channels
     "python-telegram-bot>=21.0",
@@ -92,13 +92,14 @@ all = [
 ]
 
 [project.scripts]
-clawdbot = "clawdbot.cli:app"
+openclaw = "openclaw.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/zhaoyuong/clawdbot-python"
-Documentation = "https://github.com/zhaoyuong/clawdbot-python/tree/main/docs"
-Repository = "https://github.com/zhaoyuong/clawdbot-python"
-Issues = "https://github.com/zhaoyuong/clawdbot-python/issues"
+Homepage = "https://github.com/openclaw/openclaw-python"
+Documentation = "https://github.com/openclaw/openclaw-python/tree/main/docs"
+Repository = "https://github.com/openclaw/openclaw-python"
+Issues = "https://github.com/openclaw/openclaw-python/issues"
+"Main Project" = "https://github.com/openclaw/openclaw"
 
 [dependency-groups]
 dev = [
@@ -113,7 +114,7 @@ dev = [
 ]
 
 [tool.hatchling.build.targets.wheel]
-packages = ["clawdbot"]
+packages = ["openclaw"]
 
 [tool.black]
 line-length = 100
@@ -136,11 +137,11 @@ ignore = [
 "tests/**" = ["F401", "F811"]
 "examples/*.py" = ["F401"]  # Examples may have unused imports
 "extensions/*/plugin.py" = ["F401", "F821"]  # Extensions are stubs
-"clawdbot/channels/*.py" = ["F401", "F821"]  # Channels may be incomplete
-"clawdbot/config/schema.py" = ["N815"]  # Keep TypeScript naming
-"clawdbot/gateway/protocol/*.py" = ["N815"]  # Protocol uses camelCase
-"clawdbot/web/app.py" = ["F821"]  # Web app is optional
-"clawdbot/cli/main.py" = ["F401"]  # CLI checks imports for availability
+"openclaw/channels/*.py" = ["F401", "F821"]  # Channels may be incomplete
+"openclaw/config/schema.py" = ["N815"]  # Keep TypeScript naming
+"openclaw/gateway/protocol/*.py" = ["N815"]  # Protocol uses camelCase
+"openclaw/web/app.py" = ["F821"]  # Web app is optional
+"openclaw/cli/main.py" = ["F401"]  # CLI checks imports for availability
 
 [tool.mypy]
 python_version = "3.11"
@@ -154,10 +155,10 @@ warn_unused_ignores = false
 # Ignore specific issues in work-in-progress modules
 [[tool.mypy.overrides]]
 module = [
-    "clawdbot.channels.*",
-    "clawdbot.plugins.*",
-    "clawdbot.web.*",
-    "clawdbot.gateway.*",
+    "openclaw.channels.*",
+    "openclaw.plugins.*",
+    "openclaw.web.*",
+    "openclaw.gateway.*",
 ]
 ignore_errors = true
 ignore_missing_imports = true
@@ -172,7 +173,7 @@ addopts = [
     "-v",
     "--tb=short",
     "--strict-markers",
-    "--cov=clawdbot",
+    "--cov=openclaw",
     "--cov-report=term-missing",
     "--cov-report=html",
 ]
@@ -183,7 +184,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["clawdbot"]
+source = ["openclaw"]
 omit = ["*/tests/*", "*/test_*"]
 
 [tool.coverage.report]

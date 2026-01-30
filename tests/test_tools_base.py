@@ -4,7 +4,7 @@ Tests for Tool Base Classes
 
 import pytest
 
-from clawdbot.agents.tools.base import AgentTool, ToolResult
+from openclaw.agents.tools.base import AgentTool, ToolResult
 
 
 class TestToolResult:

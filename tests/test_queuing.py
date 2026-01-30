@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from clawdbot.agents.queuing import Lane, QueueManager
+from openclaw.agents.queuing import Lane, QueueManager
 
 
 class TestLane:

@@ -4,7 +4,7 @@ Tests for thinking mode and extraction
 
 import pytest
 
-from clawdbot.agents.thinking import ThinkingExtractor, ThinkingMode
+from openclaw.agents.thinking import ThinkingExtractor, ThinkingMode
 
 
 class TestThinkingMode:

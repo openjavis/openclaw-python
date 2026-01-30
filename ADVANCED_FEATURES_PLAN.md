@@ -7,7 +7,7 @@ This document outlines the implementation plan for advanced features based on Ty
 
 ### 1. File Structure
 ```
-clawdbot/agents/
+openclaw/agents/
 ├── runtime.py (existing - will be extended)
 ├── auth/
 │   ├── __init__.py

@@ -11,8 +11,8 @@ This example shows how to:
 import asyncio
 from pathlib import Path
 
-from clawdbot.agents.runtime import AgentRuntime
-from clawdbot.agents.session import Session
+from openclaw.agents.runtime import AgentRuntime
+from openclaw.agents.session import Session
 
 
 async def main():

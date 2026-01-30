@@ -15,7 +15,7 @@ class MemorySearchTool:
         self.description = "Search through conversation memory using semantic search"
 
         if db_path is None:
-            db_path = Path.home() / ".clawdbot" / "memory"
+            db_path = Path.home() / ".openclaw" / "memory"
 
         self.db_path = db_path
         self.db_path.mkdir(parents=True, exist_ok=True)
@@ -180,7 +180,7 @@ class MemorySearchTool:
 
 def register(api):
     """Register memory search tool"""
-    from clawdbot.agents.tools.registry import get_tool_registry
+    from openclaw.agents.tools.registry import get_tool_registry
 
     memory_tool = MemorySearchTool()
     registry = get_tool_registry()

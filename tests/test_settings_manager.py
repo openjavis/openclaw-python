@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from clawdbot.config.settings_manager import SettingsManager, WorkspaceSettings
+from openclaw.config.settings_manager import SettingsManager, WorkspaceSettings
 
 
 class TestWorkspaceSettings:
@@ -17,7 +17,7 @@ class TestWorkspaceSettings:
         settings = WorkspaceSettings(tmp_path)
 
         assert settings.workspace_dir == tmp_path
-        assert settings.settings_dir == tmp_path / ".clawdbot"
+        assert settings.settings_dir == tmp_path / ".openclaw"
         assert settings.settings_file.exists() or not settings.settings_file.exists()
 
     def test_get_default(self, tmp_path):

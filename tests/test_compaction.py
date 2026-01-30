@@ -4,7 +4,7 @@ Tests for context compaction
 
 import pytest
 
-from clawdbot.agents.compaction import CompactionManager, CompactionStrategy, TokenAnalyzer
+from openclaw.agents.compaction import CompactionManager, CompactionStrategy, TokenAnalyzer
 
 
 class TestTokenAnalyzer:

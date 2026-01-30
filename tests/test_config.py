@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from clawdbot.config import ClawdbotConfig, load_config
+from openclaw.config import ClawdbotConfig, load_config
 
 
 def test_default_config():

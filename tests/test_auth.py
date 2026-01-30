@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from clawdbot.auth import APIKey, APIKeyManager, RateLimiter, RateLimitExceeded
+from openclaw.auth import APIKey, APIKeyManager, RateLimiter, RateLimitExceeded
 
 
 class TestAPIKey:

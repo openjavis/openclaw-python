@@ -34,14 +34,14 @@ The project is now suitable for production beta testing and real-world deploymen
 **Migration**:
 ```bash
 # Old way
-poetry install && poetry run clawdbot
+poetry install && poetry run openclaw
 
 # New way (much faster!)
-uv sync && uv run clawdbot
+uv sync && uv run openclaw
 ```
 
 ### 2. Complete Authentication System
-**New Module**: `clawdbot/auth/`
+**New Module**: `openclaw/auth/`
 
 **Features**:
 - API key creation and management
@@ -52,7 +52,7 @@ uv sync && uv run clawdbot
 
 **Usage**:
 ```python
-from clawdbot.auth import APIKeyManager
+from openclaw.auth import APIKeyManager
 
 manager = APIKeyManager()
 key = manager.create_key("my-app", permissions={"read", "write"})
@@ -89,7 +89,7 @@ print(f"Your API key: {key}")
 **Run Tests**:
 ```bash
 uv run pytest                    # All tests
-uv run pytest --cov=clawdbot    # With coverage
+uv run pytest --cov=openclaw    # With coverage
 uv run make test-cov            # Generate HTML report
 ```
 
@@ -108,7 +108,7 @@ uv run make test-cov            # Generate HTML report
 **After**: 4 essential files + organized docs/
 
 ```
-clawdbot-python/
+openclaw-python/
 ├── README.md              # Main docs (English)
 ├── CONTRIBUTING.md        # Contribution guide
 ├── CHANGELOG.md           # Version history
@@ -134,8 +134,8 @@ clawdbot-python/
 #### Option 1: Direct Installation
 ```bash
 # Clone
-git clone https://github.com/zhaoyuong/clawdbot-python.git
-cd clawdbot-python
+git clone https://github.com/zhaoyuong/openclaw-python.git
+cd openclaw-python
 
 # Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -149,27 +149,27 @@ echo "ANTHROPIC_API_KEY=your-key" >> .env
 
 # Create API key
 uv run python -c "
-from clawdbot.auth import get_api_key_manager
+from openclaw.auth import get_api_key_manager
 manager = get_api_key_manager()
 key = manager.create_key('production')
 print(f'API Key: {key}')
 "
 
 # Start server
-uv run clawdbot api start --host 0.0.0.0 --port 8000
+uv run openclaw api start --host 0.0.0.0 --port 8000
 ```
 
 #### Option 2: Docker
 ```bash
 # Build
-docker build -t clawdbot-python:0.4.0 .
+docker build -t openclaw-python:0.4.0 .
 
 # Run
 docker run -d \
   -p 8000:8000 \
   -e ANTHROPIC_API_KEY=your-key \
-  --name clawdbot \
-  clawdbot-python:0.4.0
+  --name openclaw \
+  openclaw-python:0.4.0
 
 # Check health
 curl http://localhost:8000/health
@@ -228,7 +228,7 @@ import openai
 
 client = openai.OpenAI(
     base_url="http://localhost:8000/v1",
-    api_key="your-clawdbot-key"
+    api_key="your-openclaw-key"
 )
 
 response = client.chat.completions.create(
@@ -265,7 +265,7 @@ curl http://localhost:8000/metrics/prometheus
 apiVersion: v1
 kind: Service
 metadata:
-  name: clawdbot
+  name: openclaw
 spec:
   ports:
   - port: 8000
@@ -273,14 +273,14 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: clawdbot
+  name: openclaw
 spec:
   replicas: 2
   template:
     spec:
       containers:
-      - name: clawdbot
-        image: clawdbot-python:0.4.0
+      - name: openclaw
+        image: openclaw-python:0.4.0
         ports:
         - containerPort: 8000
         livenessProbe:
@@ -346,14 +346,14 @@ spec:
 - [API Documentation](http://localhost:8000/docs) (when server running)
 
 ### Community
-- GitHub Issues: [Report bugs](https://github.com/zhaoyuong/clawdbot-python/issues)
-- Discussions: [Ask questions](https://github.com/zhaoyuong/clawdbot-python/discussions)
+- GitHub Issues: [Report bugs](https://github.com/zhaoyuong/openclaw-python/issues)
+- Discussions: [Ask questions](https://github.com/zhaoyuong/openclaw-python/discussions)
 
 ---
 
 ## Acknowledgments
 
-This project is a Python port of [ClawdBot](https://github.com/badlogic/clawdbot) by Mario Zechner.
+This project is a Python port of [ClawdBot](https://github.com/badlogic/openclaw) by Mario Zechner.
 
 Special thanks to the open source community for the amazing tools and libraries that made this possible.
 

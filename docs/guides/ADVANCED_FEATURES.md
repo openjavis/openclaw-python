@@ -26,8 +26,8 @@ Extract and display AI reasoning process for better transparency and debugging.
 ### Usage
 
 ```python
-from clawdbot.agents.runtime import AgentRuntime
-from clawdbot.agents.thinking import ThinkingMode
+from openclaw.agents.runtime import AgentRuntime
+from openclaw.agents.thinking import ThinkingMode
 
 runtime = AgentRuntime(
     model="anthropic/claude-opus-4-5",
@@ -67,8 +67,8 @@ Manage multiple API keys with automatic failover and cooldown tracking.
 ### Usage
 
 ```python
-from clawdbot.agents.auth import AuthProfile
-from clawdbot.agents.runtime import AgentRuntime
+from openclaw.agents.auth import AuthProfile
+from openclaw.agents.runtime import AgentRuntime
 
 profiles = [
     AuthProfile(
@@ -128,7 +128,7 @@ Automatically try backup models when primary model fails.
 ### Usage
 
 ```python
-from clawdbot.agents.runtime import AgentRuntime
+from openclaw.agents.runtime import AgentRuntime
 
 runtime = AgentRuntime(
     model="anthropic/claude-opus-4-5",
@@ -178,7 +178,7 @@ Prevent concurrent access to the same session and manage global concurrency.
 ### Usage
 
 ```python
-from clawdbot.agents.runtime import AgentRuntime
+from openclaw.agents.runtime import AgentRuntime
 
 runtime = AgentRuntime(
     model="anthropic/claude-opus-4-5",
@@ -211,8 +211,8 @@ Intelligent message pruning when context window is full.
 ### Usage
 
 ```python
-from clawdbot.agents.compaction import CompactionStrategy
-from clawdbot.agents.runtime import AgentRuntime
+from openclaw.agents.compaction import CompactionStrategy
+from openclaw.agents.runtime import AgentRuntime
 
 runtime = AgentRuntime(
     model="anthropic/claude-opus-4-5",
@@ -261,8 +261,8 @@ Format tool results appropriately for different channels.
 ### Usage
 
 ```python
-from clawdbot.agents.formatting import FormatMode
-from clawdbot.agents.runtime import AgentRuntime
+from openclaw.agents.formatting import FormatMode
+from openclaw.agents.runtime import AgentRuntime
 
 # For rich channels
 runtime_web = AgentRuntime(
@@ -320,11 +320,11 @@ PORT = 8000
 Combine features for maximum capability:
 
 ```python
-from clawdbot.agents.auth import AuthProfile
-from clawdbot.agents.compaction import CompactionStrategy
-from clawdbot.agents.formatting import FormatMode
-from clawdbot.agents.runtime import AgentRuntime
-from clawdbot.agents.thinking import ThinkingMode
+from openclaw.agents.auth import AuthProfile
+from openclaw.agents.compaction import CompactionStrategy
+from openclaw.agents.formatting import FormatMode
+from openclaw.agents.runtime import AgentRuntime
+from openclaw.agents.thinking import ThinkingMode
 
 runtime = AgentRuntime(
     model="anthropic/claude-opus-4-5",
@@ -513,12 +513,12 @@ runtime = AgentRuntime(
 ## API Reference
 
 See individual module documentation:
-- `clawdbot.agents.thinking`
-- `clawdbot.agents.auth`
-- `clawdbot.agents.failover`
-- `clawdbot.agents.queuing`
-- `clawdbot.agents.compaction`
-- `clawdbot.agents.formatting`
+- `openclaw.agents.thinking`
+- `openclaw.agents.auth`
+- `openclaw.agents.failover`
+- `openclaw.agents.queuing`
+- `openclaw.agents.compaction`
+- `openclaw.agents.formatting`
 
 ---
 

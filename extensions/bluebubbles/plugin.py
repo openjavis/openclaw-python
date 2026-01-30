@@ -1,7 +1,7 @@
 """bluebubbles channel plugin"""
 
-from clawdbot.channels.bluebubbles import BlueBubblesChannel
-from clawdbot.channels.registry import get_channel_registry
+from openclaw.channels.bluebubbles import BlueBubblesChannel
+from openclaw.channels.registry import get_channel_registry
 
 
 def register(api):

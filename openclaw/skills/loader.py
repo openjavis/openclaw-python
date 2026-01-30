@@ -133,12 +133,12 @@ class SkillLoader:
         self.load_from_directory(bundled_dir, "bundled")
 
         # Managed skills
-        managed_dir = Path.home() / ".clawdbot" / "skills"
+        managed_dir = Path.home() / ".openclaw" / "skills"
         self.load_from_directory(managed_dir, "managed")
 
         # Workspace skills (if available)
         # TODO: Get workspace from config
-        workspace_dir = Path.home() / ".clawdbot" / "workspace" / "skills"
+        workspace_dir = Path.home() / ".openclaw" / "workspace" / "skills"
         if workspace_dir.exists():
             self.load_from_directory(workspace_dir, "workspace")
 

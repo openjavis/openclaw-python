@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from clawdbot.agents import AgentRuntime, Session, SessionManager
-from clawdbot.agents.runtime import AgentEvent
-from clawdbot.agents.tools.bash import BashTool
+from openclaw.agents import AgentRuntime, Session, SessionManager
+from openclaw.agents.runtime import AgentEvent
+from openclaw.agents.tools.bash import BashTool
 
 
 class TestAgentFlow:
@@ -28,7 +28,7 @@ class TestAgentFlow:
 
             async def mock_response(*args, **kwargs):
                 # Create mock LLMResponse objects
-                from clawdbot.agents.providers.base import LLMResponse
+                from openclaw.agents.providers.base import LLMResponse
 
                 yield LLMResponse(type="text_delta", content="Hello! ")
                 yield LLMResponse(type="text_delta", content="I am ClawdBot.")
@@ -56,7 +56,7 @@ class TestAgentFlow:
         with patch.object(runtime.provider, "stream") as mock:
             # Turn 1
             async def response1(*args, **kwargs):
-                from clawdbot.agents.providers.base import LLMResponse
+                from openclaw.agents.providers.base import LLMResponse
 
                 yield LLMResponse(type="text_delta", content="Response 1")
                 yield LLMResponse(type="done", content=None)
@@ -68,7 +68,7 @@ class TestAgentFlow:
 
             # Turn 2
             async def response2(*args, **kwargs):
-                from clawdbot.agents.providers.base import LLMResponse
+                from openclaw.agents.providers.base import LLMResponse
 
                 yield LLMResponse(type="text_delta", content="Response 2")
                 yield LLMResponse(type="done", content=None)
@@ -116,7 +116,7 @@ class TestAgentFlow:
         with patch.object(runtime.provider, "stream") as mock:
 
             async def response(*args, **kwargs):
-                from clawdbot.agents.providers.base import LLMResponse
+                from openclaw.agents.providers.base import LLMResponse
 
                 yield LLMResponse(type="text_delta", content="Pruned response")
                 yield LLMResponse(type="done", content=None)

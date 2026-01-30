@@ -4,7 +4,7 @@ ClawdBot - Personal AI Assistant Platform
 A Python implementation of the ClawdBot personal AI assistant platform.
 
 Example usage:
-    from clawdbot.agents import AgentRuntime, Session
+    from openclaw.agents import AgentRuntime, Session
     from pathlib import Path
 
     runtime = AgentRuntime()

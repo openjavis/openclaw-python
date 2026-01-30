@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from clawdbot.agents import AgentRuntime, SessionManager
-from clawdbot.api.server import create_app, set_channel_registry, set_runtime, set_session_manager
-from clawdbot.channels import ChannelRegistry
+from openclaw.agents import AgentRuntime, SessionManager
+from openclaw.api.server import create_app, set_channel_registry, set_runtime, set_session_manager
+from openclaw.channels import ChannelRegistry
 
 
 @pytest.fixture

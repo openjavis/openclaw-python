@@ -26,7 +26,7 @@ Extract and display AI reasoning process for better transparency.
 
 **Usage**:
 ```python
-from clawdbot.agents.thinking import ThinkingMode
+from openclaw.agents.thinking import ThinkingMode
 
 runtime = AgentRuntime(
     model="anthropic/claude-opus-4-5",
@@ -52,7 +52,7 @@ Manage multiple API keys with automatic failover.
 
 **Usage**:
 ```python
-from clawdbot.agents.auth import AuthProfile
+from openclaw.agents.auth import AuthProfile
 
 profiles = [
     AuthProfile(id="main", provider="anthropic", api_key="$KEY1"),
@@ -131,7 +131,7 @@ Intelligent message pruning when context is full.
 
 **Usage**:
 ```python
-from clawdbot.agents.compaction import CompactionStrategy
+from openclaw.agents.compaction import CompactionStrategy
 
 runtime = AgentRuntime(
     model="anthropic/claude-opus-4-5",
@@ -155,7 +155,7 @@ Channel-appropriate tool output.
 
 **Usage**:
 ```python
-from clawdbot.agents.formatting import FormatMode
+from openclaw.agents.formatting import FormatMode
 
 runtime = AgentRuntime(
     model="anthropic/claude-opus-4-5",
@@ -223,11 +223,11 @@ runtime = AgentRuntime(
 ### Full Configuration Example
 
 ```python
-from clawdbot.agents.auth import AuthProfile
-from clawdbot.agents.compaction import CompactionStrategy
-from clawdbot.agents.formatting import FormatMode
-from clawdbot.agents.runtime import AgentRuntime
-from clawdbot.agents.thinking import ThinkingMode
+from openclaw.agents.auth import AuthProfile
+from openclaw.agents.compaction import CompactionStrategy
+from openclaw.agents.formatting import FormatMode
+from openclaw.agents.runtime import AgentRuntime
+from openclaw.agents.thinking import ThinkingMode
 
 runtime = AgentRuntime(
     model="anthropic/claude-opus-4-5",
@@ -325,7 +325,7 @@ All features maintain security standards:
 ### Upgrade
 
 ```bash
-cd clawdbot-python
+cd openclaw-python
 git pull origin main
 uv sync
 ```
@@ -333,8 +333,8 @@ uv sync
 ### Fresh Install
 
 ```bash
-git clone https://github.com/zhaoyuong/clawdbot-python.git
-cd clawdbot-python
+git clone https://github.com/zhaoyuong/openclaw-python.git
+cd openclaw-python
 uv sync
 ```
 
@@ -365,8 +365,8 @@ This release was made possible by comprehensive analysis of the TypeScript imple
 
 - **Documentation**: [docs/](docs/)
 - **Examples**: [examples/](examples/)
-- **Issues**: https://github.com/zhaoyuong/clawdbot-python/issues
-- **Discussions**: https://github.com/zhaoyuong/clawdbot-python/discussions
+- **Issues**: https://github.com/zhaoyuong/openclaw-python/issues
+- **Discussions**: https://github.com/zhaoyuong/openclaw-python/discussions
 
 ---
 

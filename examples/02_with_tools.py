@@ -10,13 +10,13 @@ This example shows how to:
 import asyncio
 from pathlib import Path
 
-from clawdbot.agents.tools.read import ReadTool
-from clawdbot.agents.tools.write import WriteTool
+from openclaw.agents.tools.read import ReadTool
+from openclaw.agents.tools.write import WriteTool
 
-from clawdbot.agents.runtime import AgentRuntime
-from clawdbot.agents.session import Session
-from clawdbot.agents.tools.base import ToolConfig, ToolPermission
-from clawdbot.agents.tools.bash import BashTool
+from openclaw.agents.runtime import AgentRuntime
+from openclaw.agents.session import Session
+from openclaw.agents.tools.base import ToolConfig, ToolPermission
+from openclaw.agents.tools.bash import BashTool
 
 
 async def main():

@@ -4,7 +4,7 @@ Tests for model failover functionality
 
 import pytest
 
-from clawdbot.agents.failover import FailoverReason, FallbackChain, FallbackError, FallbackManager
+from openclaw.agents.failover import FailoverReason, FallbackChain, FallbackError, FallbackManager
 
 
 class TestFailoverReason:

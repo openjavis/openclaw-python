@@ -1,7 +1,7 @@
 """Google Chat channel plugin"""
 
-from clawdbot.channels.googlechat import GoogleChatChannel
-from clawdbot.channels.registry import get_channel_registry
+from openclaw.channels.googlechat import GoogleChatChannel
+from openclaw.channels.registry import get_channel_registry
 
 
 def register(api):

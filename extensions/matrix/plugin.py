@@ -1,7 +1,7 @@
 """Matrix channel plugin"""
 
-from clawdbot.channels.matrix import MatrixChannel
-from clawdbot.channels.registry import get_channel_registry
+from openclaw.channels.matrix import MatrixChannel
+from openclaw.channels.registry import get_channel_registry
 
 
 def register(api):

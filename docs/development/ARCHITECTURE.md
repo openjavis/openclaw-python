@@ -44,19 +44,19 @@
 
 ## Component Details
 
-### Gateway (clawdbot/gateway/)
+### Gateway (openclaw/gateway/)
 - **WebSocket Server** - Port 18789
 - **Protocol Handler** - req/res/event frames
 - **Connection Management** - Auth and lifecycle
 - **Method Routing** - Handler dispatch
 
-### Agent Runtime (clawdbot/agents/)
+### Agent Runtime (openclaw/agents/)
 - **LLM Integration** - Anthropic, OpenAI
 - **Streaming** - Real-time response generation
 - **Tool Calling** - Coordinate tool execution
 - **Context Management** - Session and history
 
-### Tools System (clawdbot/agents/tools/)
+### Tools System (openclaw/agents/tools/)
 
 24 tools organized by category:
 
@@ -69,7 +69,7 @@
 - **Channel**: message, telegram_actions, discord_actions, slack_actions, whatsapp_actions
 - **Special**: nodes, canvas, voice_call
 
-### Channels (clawdbot/channels/)
+### Channels (openclaw/channels/)
 
 17 channels supporting different platforms:
 
@@ -91,12 +91,12 @@
 
 17 extension plugins for channels and tools
 
-### Web UI (clawdbot/web/)
+### Web UI (openclaw/web/)
 - **FastAPI Server** - HTTP and WebSocket
 - **Jinja2 Templates** - UI rendering
 - **Real-time** - WebSocket communication
 
-### CLI (clawdbot/cli/)
+### CLI (openclaw/cli/)
 - **Typer Framework** - Command structure
 - **Subcommands**: gateway, agent, channels
 
@@ -124,10 +124,10 @@ Gateway → EventFrame → All Clients
 
 ## Storage
 
-- **Sessions**: `~/.clawdbot/sessions/{session_id}/transcript.jsonl`
-- **Config**: `~/.clawdbot/clawdbot.json`
-- **Memory**: `~/.clawdbot/memory/` (LanceDB)
-- **Skills**: `~/.clawdbot/skills/` (managed)
+- **Sessions**: `~/.openclaw/sessions/{session_id}/transcript.jsonl`
+- **Config**: `~/.openclaw/openclaw.json`
+- **Memory**: `~/.openclaw/memory/` (LanceDB)
+- **Skills**: `~/.openclaw/skills/` (managed)
 
 ---
 
@@ -216,12 +216,12 @@ Gateway → EventFrame → All Clients
 ### Adding Components
 
 **New Tool**:
-1. Create in `clawdbot/agents/tools/`
+1. Create in `openclaw/agents/tools/`
 2. Inherit from `AgentTool`
 3. Register in `registry.py`
 
 **New Channel**:
-1. Create in `clawdbot/channels/`
+1. Create in `openclaw/channels/`
 2. Inherit from `ChannelPlugin`
 3. Create extension in `extensions/`
 
@@ -261,15 +261,15 @@ Gateway broadcasts events to all connected clients.
 
 ### Development
 ```bash
-clawdbot gateway start
-uvicorn clawdbot.web.app:app --reload
+openclaw gateway start
+uvicorn openclaw.web.app:app --reload
 ```
 
 ### Production
 ```bash
 # With systemd
-systemctl start clawdbot-gateway
-systemctl start clawdbot-web
+systemctl start openclaw-gateway
+systemctl start openclaw-web
 
 # With Docker
 docker-compose up -d

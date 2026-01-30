@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from clawdbot.monitoring.health import ComponentHealth, HealthCheck, HealthStatus, get_health_check
-from clawdbot.monitoring.metrics import (
+from openclaw.monitoring.health import ComponentHealth, HealthCheck, HealthStatus, get_health_check
+from openclaw.monitoring.metrics import (
     Counter,
     Gauge,
     Histogram,

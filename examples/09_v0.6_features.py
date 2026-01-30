@@ -11,16 +11,16 @@ Demonstrates all v0.6.0 features:
 import asyncio
 from pathlib import Path
 
-from clawdbot.agents.runtime import AgentRuntime
-from clawdbot.agents.session import Session
-from clawdbot.agents.summarization import MessageSummarizer, SummarizationStrategy
-from clawdbot.agents.tools.policies import (
+from openclaw.agents.runtime import AgentRuntime
+from openclaw.agents.session import Session
+from openclaw.agents.summarization import MessageSummarizer, SummarizationStrategy
+from openclaw.agents.tools.policies import (
     BlacklistPolicy,
     PolicyManager,
     RateLimitPolicy,
     WhitelistPolicy,
 )
-from clawdbot.config.settings_manager import SettingsManager, WorkspaceSettings
+from openclaw.config.settings_manager import SettingsManager, WorkspaceSettings
 
 
 async def demo_settings_manager():

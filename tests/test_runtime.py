@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from clawdbot.agents.runtime import AgentEvent, AgentRuntime
-from clawdbot.agents.session import Session
+from openclaw.agents.runtime import AgentEvent, AgentRuntime
+from openclaw.agents.session import Session
 
 
 class TestAgentRuntime:

@@ -36,7 +36,7 @@ This document explains security measures for running ClawdBot in Docker.
 
 ### 1. Non-Root User
 ```dockerfile
-USER clawdbot  # Runs as UID 1000, not root
+USER openclaw  # Runs as UID 1000, not root
 ```
 
 ### 2. Read-Only Filesystem
@@ -148,7 +148,7 @@ EOF
 docker-compose build
 
 # 3. Run status check (doesn't need API keys)
-docker-compose run --rm clawdbot python -m clawdbot.cli status
+docker-compose run --rm openclaw python -m openclaw.cli status
 
 # 4. Cleanup
 docker-compose down
@@ -194,7 +194,7 @@ rm .env
 
 ```yaml
 networks:
-  clawdbot-net:
+  openclaw-net:
     internal: true  # No internet access
 ```
 
@@ -210,7 +210,7 @@ secrets:
 
 ```bash
 # Scan image
-docker scan clawdbot-test
+docker scan openclaw-test
 
 # Check dependencies
 pip-audit
@@ -238,7 +238,7 @@ If you discover a security vulnerability:
 docker-compose run --rm \
   -e ANTHROPIC_API_KEY="" \
   -e OPENAI_API_KEY="" \
-  clawdbot python -m clawdbot.cli status
+  openclaw python -m openclaw.cli status
 
 # Shows features without making API calls
 ```
@@ -247,11 +247,11 @@ docker-compose run --rm \
 
 ```bash
 # Check user
-docker-compose run --rm clawdbot whoami
-# Should show: clawdbot (not root)
+docker-compose run --rm openclaw whoami
+# Should show: openclaw (not root)
 
 # Check capabilities
-docker-compose run --rm clawdbot capsh --print
+docker-compose run --rm openclaw capsh --print
 # Should show no capabilities
 
 # Check ports

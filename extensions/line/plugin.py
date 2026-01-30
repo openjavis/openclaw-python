@@ -1,7 +1,7 @@
 """line channel plugin"""
 
-from clawdbot.channels.line import LINEChannel
-from clawdbot.channels.registry import get_channel_registry
+from openclaw.channels.line import LINEChannel
+from openclaw.channels.registry import get_channel_registry
 
 
 def register(api):

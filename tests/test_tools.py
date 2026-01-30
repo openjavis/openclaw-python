@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from clawdbot.agents.tools.base import AgentTool, ToolResult
-from clawdbot.agents.tools.file_ops import ReadFileTool, WriteFileTool
-from clawdbot.agents.tools.registry import get_tool_registry
+from openclaw.agents.tools.base import AgentTool, ToolResult
+from openclaw.agents.tools.file_ops import ReadFileTool, WriteFileTool
+from openclaw.agents.tools.registry import get_tool_registry
 
 
 def test_tool_registry():

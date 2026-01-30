@@ -172,4 +172,4 @@ class CanvasTool(AgentTool):
 # 4. Browser automation for snapshots/eval
 #
 # The TypeScript version has a dedicated canvas server at port 18793
-# serving /__clawdbot__/canvas/ with full A2UI support.
+# serving /__openclaw__/canvas/ with full A2UI support.

@@ -12,8 +12,8 @@ This example shows how to use different LLM providers with ClawdBot:
 import asyncio
 import os
 
-from clawdbot.agents.runtime import MultiProviderRuntime
-from clawdbot.agents.session import Session
+from openclaw.agents.runtime import MultiProviderRuntime
+from openclaw.agents.session import Session
 
 
 async def test_provider(name: str, model: str, **kwargs):

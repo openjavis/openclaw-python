@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from clawdbot.skills.loader import SkillLoader
-from clawdbot.skills.types import Skill, SkillMetadata
+from openclaw.skills.loader import SkillLoader
+from openclaw.skills.types import Skill, SkillMetadata
 
 
 def test_skill_loader():

@@ -4,7 +4,7 @@ Tests for message summarization
 
 import pytest
 
-from clawdbot.agents.summarization import MessageSummarizer, SummarizationStrategy
+from openclaw.agents.summarization import MessageSummarizer, SummarizationStrategy
 
 
 class TestSummarizationStrategy:

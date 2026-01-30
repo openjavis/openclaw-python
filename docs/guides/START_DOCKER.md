@@ -65,7 +65,7 @@ docker-compose ps
 
 ### 已实施的安全措施
 
-✅ **非root用户** - 容器以`clawdbot`用户运行（UID 1000）  
+✅ **非root用户** - 容器以`openclaw`用户运行（UID 1000）  
 ✅ **只读文件系统** - 防止恶意文件修改  
 ✅ **Localhost绑定** - 端口仅绑定到127.0.0.1  
 ✅ **无特权运行** - 删除所有容器特殊权限  
@@ -75,14 +75,14 @@ docker-compose ps
 ### 安全验证
 
 ```bash
-# 检查运行用户（应该是clawdbot，不是root）
-docker-compose exec clawdbot whoami
+# 检查运行用户（应该是openclaw，不是root）
+docker-compose exec openclaw whoami
 
 # 检查端口绑定（应该是127.0.0.1）
 netstat -tlnp | grep 18789
 
 # 查看资源使用
-docker stats clawdbot-test
+docker stats openclaw-test
 ```
 
 ---
@@ -128,7 +128,7 @@ docker-compose restart
 docker-compose logs -f
 
 # 进入容器
-docker-compose exec clawdbot bash
+docker-compose exec openclaw bash
 
 # 查看状态
 docker-compose ps
@@ -141,7 +141,7 @@ docker-compose ps
 docker-compose down
 
 # 删除镜像
-docker rmi clawdbot-python-clawdbot
+docker rmi openclaw-python-openclaw
 
 # 清理所有
 docker-compose down --rmi all --volumes

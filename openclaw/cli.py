@@ -21,7 +21,7 @@ from .config.settings import Settings, get_settings
 from .monitoring import get_health_check, get_metrics, setup_logging
 
 app = typer.Typer(
-    name="clawdbot",
+    name="openclaw",
     help="ClawdBot - Personal AI Assistant Platform",
     add_completion=False,
     rich_markup_mode="rich",
@@ -100,7 +100,7 @@ def agent_chat(
     """
     Chat with agent (one-shot)
 
-    Example: clawdbot agent chat "Hello, who are you?"
+    Example: openclaw agent chat "Hello, who are you?"
     """
 
     async def run():

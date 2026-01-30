@@ -13,14 +13,14 @@ Get ClawdBot Python up and running in minutes.
 ### Option 1: Poetry (Recommended)
 
 ```bash
-cd clawdbot-python
+cd openclaw-python
 poetry install
 ```
 
 ### Option 2: pip
 
 ```bash
-cd clawdbot-python
+cd openclaw-python
 pip install -e .
 ```
 
@@ -51,10 +51,10 @@ pip install elevenlabs twilio psutil pillow
 ### 1. Run Onboarding
 
 ```bash
-clawdbot onboard
+openclaw onboard
 ```
 
-This creates `~/.clawdbot/clawdbot.json` with default configuration.
+This creates `~/.openclaw/openclaw.json` with default configuration.
 
 ### 2. Set API Keys
 
@@ -65,7 +65,7 @@ export OPENAI_API_KEY="your-openai-key"
 
 ### 3. Configure Channels (Optional)
 
-Edit `~/.clawdbot/clawdbot.json`:
+Edit `~/.openclaw/openclaw.json`:
 
 ```json
 {
@@ -87,7 +87,7 @@ Edit `~/.clawdbot/clawdbot.json`:
 ### Start Gateway
 
 ```bash
-clawdbot gateway start
+openclaw gateway start
 ```
 
 The gateway listens on WebSocket port 18789.
@@ -96,31 +96,31 @@ The gateway listens on WebSocket port 18789.
 
 ```bash
 # Interactive mode
-clawdbot agent run
+openclaw agent run
 
 # Single turn
-clawdbot agent run "What's the weather today?"
+openclaw agent run "What's the weather today?"
 
 # With specific model
-clawdbot agent run --model claude-opus-4 "Help me code"
+openclaw agent run --model claude-opus-4 "Help me code"
 ```
 
 ### Channel Management
 
 ```bash
 # List channels
-clawdbot channels list
+openclaw channels list
 
 # Login to channel
-clawdbot channels login telegram
-clawdbot channels login discord
+openclaw channels login telegram
+openclaw channels login discord
 ```
 
 ### Web UI
 
 ```bash
 # Start web server
-uvicorn clawdbot.web.app:app --reload --port 8080
+uvicorn openclaw.web.app:app --reload --port 8080
 ```
 
 Then visit http://localhost:8080
@@ -132,26 +132,26 @@ Then visit http://localhost:8080
 pytest
 
 # Check status
-clawdbot status
+openclaw status
 
 # Run doctor
-clawdbot doctor
+openclaw doctor
 ```
 
 ## Common Commands
 
 ```bash
 # Status check
-clawdbot status
+openclaw status
 
 # Health check
-clawdbot doctor
+openclaw doctor
 
 # List sessions
-clawdbot agent sessions
+openclaw agent sessions
 
 # Clear sessions
-rm -rf ~/.clawdbot/sessions/*
+rm -rf ~/.openclaw/sessions/*
 ```
 
 ## Next Steps
@@ -165,7 +165,7 @@ rm -rf ~/.clawdbot/sessions/*
 
 ### Gateway won't start
 - Check port 18789 is available
-- Verify config file exists: `~/.clawdbot/clawdbot.json`
+- Verify config file exists: `~/.openclaw/openclaw.json`
 
 ### API errors
 - Verify API keys are set
@@ -175,7 +175,7 @@ rm -rf ~/.clawdbot/sessions/*
 ### Channel errors
 - Verify bot tokens
 - Check channel-specific requirements
-- See channel documentation in `clawdbot/channels/`
+- See channel documentation in `openclaw/channels/`
 
 ## Support
 
