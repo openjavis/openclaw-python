@@ -50,13 +50,17 @@ See [docs/RELEASE_NOTES_v0.6.0.md](docs/RELEASE_NOTES_v0.6.0.md) for full detail
 ### Prerequisites
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) package manager
-- API keys (Anthropic/OpenAI/Google)
+- **At least ONE** API key (choose any):
+  - Anthropic Claude (recommended)
+  - OpenAI GPT
+  - Google Gemini
+  - Or use Ollama (local, free)
 
 ### Installation
 
 ```bash
 # Clone repository
-git clone https://github.com/openclaw/openclaw-python.git
+git clone https://github.com/zhaoyuong/openclaw-python.git
 cd openclaw-python
 
 # Install uv (if needed)
@@ -65,63 +69,100 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Install dependencies
 uv sync
 
-# Configure environment
+# Configure (choose ONE provider)
 cp .env.example .env
-# Add your API keys to .env
+# Edit .env and add at least one:
+# ANTHROPIC_API_KEY=your-key  (Claude - recommended)
+# OPENAI_API_KEY=your-key     (GPT)
+# GOOGLE_API_KEY=your-key     (Gemini)
+# Or use Ollama (no key needed)
 ```
 
-### First Chat
+### Start Using
 
 ```bash
-# Test with Gemini 3 Flash (recommended)
-uv run python test_gemini_3_flash.py
+# Command-line chat (simplest)
+uv run openclaw agent chat "Hello, introduce yourself"
 
-# Or use the CLI
-uv run openclaw agent chat "Hello!"
+# Interactive mode (recommended for daily use)
+uv run openclaw agent interactive
+
+# Specify model
+uv run openclaw agent chat "Write code" --model anthropic/claude-opus-4-5
+
+# Use local Ollama (free)
+ollama serve  # In another terminal
+uv run openclaw agent chat "Hello" --model ollama/llama3.2
 ```
+
+### 📖 Complete Guides
+
+- **[👋 START_HERE.md](START_HERE.md)** - 1-minute quick start
+- **[🚀 QUICK_START.md](QUICK_START.md)** - 5-minute complete guide  
+- **[📚 docs/](docs/)** - Full documentation
 
 ---
 
-## 🎯 Recommended Setup
+## 💻 Usage Examples
 
-### For Gemini 3 (NEW - 2026)
+### Command-Line Usage
 
-```python
-from openclaw.agents.runtime import AgentRuntime
+```bash
+# Basic chat
+uv run openclaw agent chat "What is Python?"
 
-runtime = AgentRuntime(
-    model="gemini-3-flash-preview",  # Latest & fastest
-    max_tokens=8192,
-    temperature=0.7
-)
+# With specific model
+uv run openclaw agent chat "Write a function" --model anthropic/claude-opus-4-5
 
-# With Thinking Mode
-async for event in runtime.run_turn(session, thinking_mode="HIGH"):
-    if event["type"] == "text":
-        print(event["text"], end="")
+# Interactive mode (multi-turn conversation)
+uv run openclaw agent interactive
 ```
 
-### For Production
+### Python Script
 
 ```python
-from openclaw.agents.runtime import AgentRuntime
-from openclaw.agents.thinking import ThinkingMode
-from openclaw.agents.tools.policies import PolicyManager, WhitelistPolicy
+import asyncio
+from openclaw.agents import AgentRuntime, Session
+from pathlib import Path
 
-# Security policies
-policies = PolicyManager()
-policies.add_policy(WhitelistPolicy(["bash", "read_file"]))
+async def main():
+    # Create runtime (choose your provider)
+    runtime = AgentRuntime(
+        model="anthropic/claude-opus-4-5",  # or any model
+        max_tokens=2000,
+        temperature=0.7
+    )
+    
+    # Create session
+    session = Session(
+        session_id="my-chat",
+        workspace_dir=Path.cwd()
+    )
+    
+    # Send message
+    response = await runtime.run_turn(
+        session=session,
+        user_message="Hello! Introduce yourself."
+    )
+    
+    # Stream output
+    async for event in response:
+        if event["type"] == "text":
+            print(event["text"], end="", flush=True)
 
-# Runtime with all features
-runtime = AgentRuntime(
-    model="gemini-3-flash-preview",
-    thinking_mode=ThinkingMode.STREAM,
-    fallback_models=["anthropic/claude-opus-4-5"],
-    enable_queuing=True
-)
+asyncio.run(main())
 ```
 
-See [GEMINI_SETUP_GUIDE.md](GEMINI_SETUP_GUIDE.md) for detailed configuration.
+### API Server
+
+```bash
+# Start API server
+uv run openclaw api start
+
+# Access API docs at http://localhost:18789/docs
+```
+
+See [QUICK_START.md](QUICK_START.md) for more examples.
 
 ---
 
