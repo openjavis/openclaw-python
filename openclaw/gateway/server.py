@@ -134,10 +134,29 @@ class GatewayConnection:
 class GatewayServer:
     """Gateway WebSocket server"""
 
-    def __init__(self, config: ClawdbotConfig):
+    def __init__(self, config: ClawdbotConfig, agent_runtime=None):
         self.config = config
         self.connections: set[GatewayConnection] = set()
         self.running = False
+        self.agent_runtime = agent_runtime
+        
+        # Register as observer if agent_runtime provided
+        if agent_runtime:
+            agent_runtime.add_event_listener(self.on_agent_event)
+            logger.info("Gateway registered as Agent Runtime observer")
+    
+    async def on_agent_event(self, event):
+        """
+        Observer callback: Agent Runtime automatically calls this for every event
+        
+        This implements the Observer Pattern where Gateway passively receives
+        events instead of channels actively pushing to Gateway.
+        """
+        # Broadcast to all WebSocket clients
+        await self.broadcast_event("agent", {
+            "type": event.type,
+            "data": event.data
+        })
 
     async def handle_connection(self, websocket: WebSocketServerProtocol) -> None:
         """Handle new WebSocket connection"""

@@ -74,8 +74,8 @@ class IntegratedOpenClawServer:
         # Channel registry
         self.channel_registry = ChannelRegistry()
         
-        # Gateway server
-        self.gateway_server = GatewayServer(config)
+        # Gateway server (register as observer of agent_runtime)
+        self.gateway_server = GatewayServer(config, self.agent_runtime)
         
         # Telegram channel (optional)
         self.telegram_channel: EnhancedTelegramChannel | None = None
@@ -113,16 +113,8 @@ class IntegratedOpenClawServer:
                     )
                     logger.info(f"✅ Sent response to Telegram ({len(response_text)} chars)")
                     
-                    # Broadcast event to Gateway clients
-                    await self.gateway_server.broadcast_event(
-                        "chat",
-                        {
-                            "channel": "telegram",
-                            "sessionId": session_id,
-                            "message": message.text,
-                            "response": response_text,
-                        }
-                    )
+                    # ✅ No need to call gateway.broadcast_event()
+                    # Gateway automatically receives events via observer pattern
                     
             except Exception as e:
                 logger.error(f"❌ Error processing Telegram message: {e}", exc_info=True)

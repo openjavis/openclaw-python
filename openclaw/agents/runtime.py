@@ -144,6 +144,9 @@ class MultiProviderRuntime:
             self.token_analyzer = None
             self.compaction_manager = None
 
+        # Observer pattern: event listeners (e.g., Gateway)
+        self.event_listeners: list = []
+
     def _parse_model(self, model: str) -> tuple[str, str]:
         """
         Parse model string into provider and model name
@@ -159,6 +162,42 @@ class MultiProviderRuntime:
         else:
             # Default to anthropic
             return "anthropic", model
+
+    def add_event_listener(self, listener):
+        """
+        Register an event listener (observer pattern)
+        
+        The listener will be called for every AgentEvent produced during run_turn.
+        This allows components like Gateway to observe agent events without direct coupling.
+        
+        Args:
+            listener: Callable that accepts AgentEvent. Can be sync or async.
+        
+        Example:
+            async def on_agent_event(event: AgentEvent):
+                print(f"Agent event: {event.type}")
+            
+            agent_runtime.add_event_listener(on_agent_event)
+        """
+        self.event_listeners.append(listener)
+        logger.debug(f"Registered event listener: {listener}")
+
+    def remove_event_listener(self, listener):
+        """Remove an event listener"""
+        if listener in self.event_listeners:
+            self.event_listeners.remove(listener)
+            logger.debug(f"Removed event listener: {listener}")
+
+    async def _notify_observers(self, event: AgentEvent):
+        """Notify all registered observers of an event"""
+        for listener in self.event_listeners:
+            try:
+                if asyncio.iscoroutinefunction(listener):
+                    await listener(event)
+                else:
+                    listener(event)
+            except Exception as e:
+                logger.error(f"Observer notification failed: {e}", exc_info=True)
 
     def _create_provider(self) -> LLMProvider:
         """Create appropriate provider based on provider name"""
@@ -280,7 +319,7 @@ class MultiProviderRuntime:
                     for m in compacted
                 ]
 
-                yield AgentEvent(
+                event = AgentEvent(
                     "compaction",
                     {
                         "original_tokens": current_tokens,
@@ -288,8 +327,12 @@ class MultiProviderRuntime:
                         "strategy": self.compaction_strategy.value,
                     },
                 )
+                await self._notify_observers(event)
+                yield event
 
-        yield AgentEvent("lifecycle", {"phase": "start"})
+        event = AgentEvent("lifecycle", {"phase": "start"})
+        await self._notify_observers(event)
+        yield event
 
         # Execute with retry logic and failover
         retry_count = 0
@@ -344,22 +387,28 @@ class MultiProviderRuntime:
                             # Stream thinking separately if mode is STREAM
                             if self.thinking_mode == ThinkingMode.STREAM and thinking_delta:
                                 accumulated_thinking += thinking_delta
-                                yield AgentEvent(
+                                event = AgentEvent(
                                     "thinking",
                                     {"delta": {"text": thinking_delta}, "mode": "stream"},
                                 )
+                                await self._notify_observers(event)
+                                yield event
 
                             # Stream content (non-thinking text)
                             if content_delta:
-                                yield AgentEvent(
+                                event = AgentEvent(
                                     "assistant",
                                     {"delta": {"type": "text_delta", "text": content_delta}},
                                 )
+                                await self._notify_observers(event)
+                                yield event
                         else:
                             # No thinking extraction, stream as-is
-                            yield AgentEvent(
+                            event = AgentEvent(
                                 "assistant", {"delta": {"type": "text_delta", "text": text}}
                             )
+                            await self._notify_observers(event)
+                            yield event
 
                     elif response.type == "tool_call":
                         tool_calls = response.tool_calls or []
@@ -373,7 +422,7 @@ class MultiProviderRuntime:
                                     tc["name"], tc["arguments"]
                                 )
 
-                                yield AgentEvent(
+                                event = AgentEvent(
                                     "tool_use",
                                     {
                                         "tool": tc["name"],
@@ -381,6 +430,8 @@ class MultiProviderRuntime:
                                         "formatted": formatted_use,
                                     },
                                 )
+                                await self._notify_observers(event)
+                                yield event
 
                                 # Execute tool
                                 try:
@@ -393,7 +444,7 @@ class MultiProviderRuntime:
                                         tc["name"], output, success
                                     )
 
-                                    yield AgentEvent(
+                                    event = AgentEvent(
                                         "tool_result",
                                         {
                                             "tool": tc["name"],
@@ -402,6 +453,8 @@ class MultiProviderRuntime:
                                             "formatted": formatted_result,
                                         },
                                     )
+                                    await self._notify_observers(event)
+                                    yield event
 
                                     # Add tool result to session
                                     session.add_tool_message(
@@ -414,7 +467,7 @@ class MultiProviderRuntime:
                                         tc["name"], error_msg, success=False
                                     )
 
-                                    yield AgentEvent(
+                                    event = AgentEvent(
                                         "tool_result",
                                         {
                                             "tool": tc["name"],
@@ -424,6 +477,8 @@ class MultiProviderRuntime:
                                             "formatted": formatted_error,
                                         },
                                     )
+                                    await self._notify_observers(event)
+                                    yield event
 
                                     session.add_tool_message(
                                         tool_call_id=tc["id"],
@@ -438,9 +493,11 @@ class MultiProviderRuntime:
                             extracted = self.thinking_extractor.extract(accumulated_text)
                             if extracted.has_thinking:
                                 # Include thinking in response
-                                yield AgentEvent(
+                                event = AgentEvent(
                                     "thinking", {"content": extracted.thinking, "mode": "on"}
                                 )
+                                await self._notify_observers(event)
+                                yield event
                                 final_text = extracted.content
 
                         # Save assistant message
@@ -457,7 +514,9 @@ class MultiProviderRuntime:
                         raise Exception(response.content)
 
                 # Success, exit retry loop
-                yield AgentEvent("lifecycle", {"phase": "end"})
+                event = AgentEvent("lifecycle", {"phase": "end"})
+                await self._notify_observers(event)
+                yield event
                 return
 
             except Exception as e:
@@ -477,7 +536,7 @@ class MultiProviderRuntime:
                             self.provider_name, self.model_name = self._parse_model(next_model)
                             self.provider = self._create_provider()
 
-                            yield AgentEvent(
+                            event = AgentEvent(
                                 "failover",
                                 {
                                     "from": current_model,
@@ -486,6 +545,8 @@ class MultiProviderRuntime:
                                     "error": str(e),
                                 },
                             )
+                            await self._notify_observers(event)
+                            yield event
 
                             # Continue to next attempt (no sleep, immediate retry with new model)
                             continue
@@ -493,23 +554,33 @@ class MultiProviderRuntime:
                 # Check if retryable
                 if not is_retryable_error(e) and not should_failover:
                     logger.error(f"Non-retryable error: {format_error_message(e)}")
-                    yield AgentEvent(
+                    event = AgentEvent(
                         "error",
                         {"message": format_error_message(e), "category": classify_error(e).value},
                     )
-                    yield AgentEvent("lifecycle", {"phase": "end"})
+                    await self._notify_observers(event)
+                    yield event
+                    
+                    event = AgentEvent("lifecycle", {"phase": "end"})
+                    await self._notify_observers(event)
+                    yield event
                     return
 
                 if retry_count >= self.max_retries:
                     logger.error(f"Max retries reached: {format_error_message(e)}")
-                    yield AgentEvent(
+                    event = AgentEvent(
                         "error",
                         {
                             "message": f"Max retries exceeded: {format_error_message(e)}",
                             "category": classify_error(e).value,
                         },
                     )
-                    yield AgentEvent("lifecycle", {"phase": "end"})
+                    await self._notify_observers(event)
+                    yield event
+                    
+                    event = AgentEvent("lifecycle", {"phase": "end"})
+                    await self._notify_observers(event)
+                    yield event
                     return
 
                 # Retry with exponential backoff
@@ -517,7 +588,7 @@ class MultiProviderRuntime:
                 delay = min(2 ** (retry_count - 1), 30)
                 logger.warning(f"Retry {retry_count}/{self.max_retries} after {delay}s: {e}")
 
-                yield AgentEvent(
+                event = AgentEvent(
                     "retry",
                     {
                         "attempt": retry_count,
@@ -526,6 +597,8 @@ class MultiProviderRuntime:
                         "error": str(e),
                     },
                 )
+                await self._notify_observers(event)
+                yield event
 
                 await asyncio.sleep(delay)
 
