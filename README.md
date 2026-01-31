@@ -132,36 +132,40 @@ uv run python examples/10_gateway_telegram_bridge.py
 
 **Architecture:**
 ```
-┌─────────────────────────────────────────────────────────┐
-│            OpenClaw Server (Single Process)             │
-│                                                         │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │            Gateway Server                        │  │
-│  │  • Lifecycle Management (start/stop channels)   │  │
-│  │  • WebSocket API (ws://localhost:8765)          │  │
-│  │  • Event Broadcasting                           │  │
-│  └────────┬─────────────────────────────────────┬──┘  │
-│           │ manages                              │ broadcasts
-│           ↓                                      ↓      │
-│  ┌────────────────┐        ┌─────────────────────────┐│
-│  │ Telegram Bot   │ calls  │   Agent Runtime         ││
-│  │   (Channel)    │───────→│   • Process messages    ││
-│  │                │←───────│   • Call LLM API        ││
-│  │ HTTP Polling   │ returns│   • Generate replies    ││
-│  │ Telegram API   │        │   • Emit events         ││
-│  └────────────────┘        └─────────────────────────┘│
-│         ↕                                               │
-└─────────┼───────────────────────────────────────────────┘
-          │ HTTP                      ↕ WebSocket
-    Telegram API              External Clients
-     (Users)                  (UI, CLI, iOS)
+┌──────────────────────────────────────────────────────────┐
+│             OpenClaw Server (Single Process)             │
+│                                                          │
+│  ┌────────────────────────────────────────────────┐    │
+│  │            Gateway Server                       │    │
+│  │  • Channel Management (start/stop)             │    │
+│  │  • WebSocket API (ws://localhost:8765)         │    │
+│  │  • Event Broadcasting                          │    │
+│  └───────┬──────────────────────────────────┬─────┘    │
+│          │ manages                    broadcasts        │
+│          ↓                                  ↓            │
+│  ┌───────────────────┐        ┌──────────────────────┐ │
+│  │    Channels       │ calls  │   Agent Runtime      │ │
+│  │  (Plugins)        │───────→│                      │ │
+│  │  ┌──────────────┐ │←───────│ • Process messages  │ │
+│  │  │  Telegram    │ │returns │ • Call LLM API      │ │
+│  │  │  (Plugin)    │ │        │ • Generate replies  │ │
+│  │  └──────────────┘ │        │ • Emit events       │ │
+│  │  HTTP Polling     │        └──────────────────────┘ │
+│  │  Telegram API     │                                  │
+│  └────────┬──────────┘                                  │
+│           │                                              │
+└───────────┼──────────────────────────────────────────────┘
+            │ HTTP                    ↕ WebSocket
+      Telegram API             External Clients
+       (Users)                (UI, CLI, iOS)
 ```
 
 **Gateway's Three Responsibilities:**
 
-1. **Lifecycle Management**
-   - Starts and stops channel plugins (Telegram, Discord, etc.)
-   - Manages channel configuration and health
+1. **Channel Management**
+   - Manages channel plugins (Telegram, Discord, etc.) as part of Gateway
+   - Starts and stops channels
+   - Channels are server-side plugins, not external clients
 
 2. **WebSocket API**
    - Provides `ws://localhost:8765` for external clients
@@ -169,11 +173,17 @@ uv run python examples/10_gateway_telegram_bridge.py
    - Serves Control UI, CLI tools, and mobile apps
 
 3. **Event Broadcasting**
-   - Receives events from Agent Runtime
+   - Observes Agent Runtime events (Observer Pattern)
    - Broadcasts to all connected WebSocket clients
    - Real-time updates for conversations
 
-**Key Point:** Telegram Bot doesn't connect through WebSocket! It's a server-side plugin that calls Agent directly via Python functions.
+**Key Points:** 
+- **Channels are inside Gateway**: Telegram, Discord, etc. are managed by Gateway as plugins
+- **Channels call Agent directly**: Via Python function calls (same process), not HTTP/WebSocket
+- **Gateway observes Agent**: Uses Observer Pattern to receive events automatically
+- **External clients use WebSocket**: Web UI, CLI, mobile apps connect via `ws://localhost:8765`
+
+**Python Implementation Note:** This is a simplified version. TypeScript uses explicit `ChannelManager` class. See [docs/PYTHON_VS_TYPESCRIPT_ARCHITECTURE.md](docs/PYTHON_VS_TYPESCRIPT_ARCHITECTURE.md) for details.
 
 **Benefits:**
 - 📡 **Unified Management** - Gateway controls all channel lifecycles
@@ -407,36 +417,75 @@ CLAWDBOT_LOG_LEVEL=INFO
 │              OpenClaw Server (Single Process)            │
 │                                                          │
 │  ┌────────────────────────────────────────────────┐    │
-│  │          Gateway Server                        │    │
-│  │  • Manages channel lifecycles                  │    │
-│  │  • Provides WebSocket API (ws://localhost:8765)│    │
-│  │  • Broadcasts events to clients                │    │
-│  └───────┬──────────────────────────────────┬─────┘    │
-│          │ manages                          │ events   │
-│          ↓                                  ↓          │
-│  ┌───────────────┐       ┌─────────────────────────┐  │
-│  │   Channels    │ calls │   Agent Runtime         │  │
-│  │  - Telegram   │──────→│  • Multi-Provider LLM   │  │
-│  │  - Discord    │←──────│  • 24+ Tools            │  │
-│  │  - Slack      │returns│  • Context Management   │  │
-│  └───────────────┘       └─────────────────────────┘  │
-│         ↕                                              │
-└─────────┼──────────────────────────────────────────────┘
-          │ HTTP/Long Polling          ↕ WebSocket
-     Social Platforms             External Clients
-   (Telegram, Discord...)        (UI, CLI, Mobile)
+│  │           Gateway Server                       │    │
+│  │                                                │    │
+│  │  ┌──────────────────────────────────────┐    │    │
+│  │  │      Channel Management              │    │    │
+│  │  │  (manages channel plugins)           │    │    │
+│  │  └───────┬──────────────────────────────┘    │    │
+│  │          │                                     │    │
+│  │  ┌───────▼─────────────────────────────┐    │    │
+│  │  │       Channels (Plugins)            │    │    │
+│  │  │  ┌──────┐ ┌────────┐ ┌───────┐     │    │    │
+│  │  │  │Telegram Discord│ │Slack │     │    │    │
+│  │  │  └───┬──┘ └───┬────┘ └───┬───┘     │    │    │
+│  │  │      │        │          │         │    │    │
+│  │  │    HTTP       WS       HTTP         │    │    │
+│  │  └──────┼────────┼──────────┼──────────┘    │    │
+│  │         │        │          │                │    │
+│  │      外部平台 API 服务器                      │    │
+│  │                                                │    │
+│  │  ┌──────────────────────────────────────┐    │    │
+│  │  │     WebSocket Server                 │    │    │
+│  │  │  ws://localhost:8765                │    │    │
+│  │  │  (for external clients)              │    │    │
+│  │  └──────────────────────────────────────┘    │    │
+│  └────────────────────────────────────────────────┘    │
+│          ↑                         ↑                    │
+│          │ calls            observes (events)           │
+│          │                         │                    │
+│  ┌───────▼─────────────────────────┴──────────────┐   │
+│  │         Agent Runtime (Single)                  │   │
+│  │  • Multi-Provider LLM                          │   │
+│  │  • 24+ Tools                                   │   │
+│  │  • Context Management                          │   │
+│  └─────────────────────────────────────────────────┘   │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+          │                            ↕
+    Platform APIs                WebSocket
+   (Telegram, Discord...)    (UI, CLI, Mobile)
 ```
 
 ### Communication Types
 
-1. **Channels ↔ Social Platforms**: HTTP (Telegram API, Discord API, etc.)
-2. **Channels ↔ Agent**: Python function calls (same process)
-3. **Gateway ↔ External Clients**: WebSocket
-4. **Agent ↔ LLM**: HTTPS (Claude, GPT, Gemini APIs)
+1. **Channels ↔ Social Platforms**: HTTP/WebSocket (Telegram API, Discord Gateway, etc.)
+2. **Channels ↔ Agent Runtime**: Python function calls (same process)
+3. **Agent Runtime → Gateway**: Observer Pattern (automatic event notifications)
+4. **Gateway ↔ External Clients**: WebSocket (`ws://localhost:8765`)
+5. **Agent ↔ LLM**: HTTPS (Claude, GPT, Gemini APIs)
 
-### Key Insight
+### Key Insights
 
-**Channels are server-side plugins, not Gateway clients!** They call Agent directly via functions, while Gateway manages their lifecycle and serves external WebSocket clients.
+1. **Channels are inside Gateway**: They are server-side plugins managed by Gateway, not independent services
+2. **No WebSocket between Channels and Gateway**: Channels are part of Gateway (same process)
+3. **Observer Pattern**: Gateway automatically receives Agent events without Channels calling it
+4. **WebSocket is for external clients only**: Web UI, CLI, mobile apps connect via WebSocket
+
+### Python vs TypeScript
+
+**TypeScript (Official):**
+- Explicit `ChannelManager` class within Gateway
+- Plugin system for automatic channel loading
+- Each channel has independent `RuntimeEnv`
+
+**Python (This Project):**
+- Simplified channel management (no explicit ChannelManager class)
+- Manual channel instantiation
+- All channels share single `AgentRuntime`
+- Core architecture remains identical
+
+See [docs/PYTHON_VS_TYPESCRIPT_ARCHITECTURE.md](docs/PYTHON_VS_TYPESCRIPT_ARCHITECTURE.md) for detailed comparison.
 
 ---
 
