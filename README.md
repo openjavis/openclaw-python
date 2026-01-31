@@ -91,9 +91,9 @@ uv run openclaw agent interactive
 
 ---
 
-## 🔌 Two Ways to Connect
+## 🔌 Connection Methods
 
-### Option 1: Social Platform Bots (Recommended)
+### Method 1: Direct Bot (Quickest Start) ✅
 
 Connect through platforms you already use. **No new apps needed**.
 
@@ -108,45 +108,102 @@ uv run python examples/05_telegram_bot.py
 
 Now chat with your AI in Telegram! Works on phone, desktop, web.
 
-### Option 2: Gateway Protocol (Advanced)
-
-Connect any device or custom app using OpenClaw's WebSocket Gateway.
-
-**Features:**
-- 🔐 Secure device pairing
-- 🔄 Bidirectional messaging
-- 📡 Real-time events
-- 🌐 Cross-platform (iOS, Android, Desktop, Web)
-
-**Start Gateway Server:**
-
-```bash
-uv run openclaw gateway start --port 8765
+**Architecture:**
+```
+Telegram User → Bot API → Your Bot → Agent Runtime
 ```
 
-**Connect from your app:**
+---
+
+### Method 2: Integrated Server (Recommended for Production) ⭐
+
+Run Gateway + Channels in one unified server, matching the official TypeScript architecture.
+
+**Start integrated server:**
+
+```bash
+# Set environment variables
+export TELEGRAM_BOT_TOKEN=your-token
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Start server with Telegram channel
+uv run python examples/10_gateway_telegram_bridge.py
+```
+
+**Architecture:**
+```
+┌─────────────────────────────────────┐
+│     OpenClaw Server (One Process)   │
+│                                     │
+│  ┌──────────┐    ┌──────────────┐ │
+│  │ Gateway  │◄──►│   Channels   │ │
+│  │ Server   │    │  - Telegram  │ │
+│  │(WebSocket│    │  - Discord   │ │
+│  └────▲─────┘    │  - Slack     │ │
+│       │          └──────────────┘ │
+└───────┼──────────────────────────┘
+        │
+        │ External Clients
+        ├─► iOS App
+        ├─► Web UI
+        └─► Custom Apps
+```
+
+**Benefits:**
+- 📡 **Unified Management** - All channels through one Gateway
+- 🔌 **Multiple Clients** - Connect iOS, Web, Telegram simultaneously  
+- 📊 **Centralized Monitoring** - Track all conversations in one place
+- 🚀 **Production Ready** - Same architecture as official TypeScript version
+
+---
+
+### Method 3: Gateway Protocol (Custom Clients)
+
+Connect custom applications using WebSocket protocol.
+
+**Connect from JavaScript:**
 
 ```javascript
 const ws = new WebSocket('ws://localhost:8765');
 
-// Authenticate
+// 1. Handshake
 ws.send(JSON.stringify({
   type: 'req',
   id: '1',
   method: 'connect',
-  params: { clientName: 'MyApp', protocolVersion: 1 }
+  params: {
+    maxProtocol: 1,
+    client: {
+      name: 'my-app',
+      version: '1.0.0',
+      platform: 'web'
+    }
+  }
 }));
 
-// Send message to agent
+// 2. Send message to agent
 ws.send(JSON.stringify({
   type: 'req',
   id: '2',
-  method: 'agent.chat',
-  params: { message: 'Hello AI!' }
+  method: 'agent',
+  params: {
+    message: 'Hello AI!',
+    sessionId: 'my-session'
+  }
 }));
+
+// 3. Listen for events
+ws.onmessage = (event) => {
+  const frame = JSON.parse(event.data);
+  console.log('Received:', frame);
+};
 ```
 
-See [examples/gateway/](examples/gateway/) for full SDK examples.
+**Protocol Features:**
+- 🔐 Device authentication & pairing
+- 🔄 Bidirectional messaging
+- 📡 Real-time event streaming
+- 🌐 Cross-platform support
 
 ---
 
