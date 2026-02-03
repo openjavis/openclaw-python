@@ -185,7 +185,6 @@ class MultiProviderRuntime:
 
     async def _notify_observers(self, event: Event):
         """Notify all registered observers of an event"""
-        print(f"DEBUG: 当前共有 {len(self.event_listeners)} 个监听器正在运行")  # 加入这行
         for listener in self.event_listeners:
             try:
                 if asyncio.iscoroutinefunction(listener):
@@ -404,9 +403,6 @@ class MultiProviderRuntime:
                                     data={"delta": {"type": "text_delta", "text": content_delta}},
                                 )
                                 await self._notify_observers(event)
-                                print(
-                                    f"DEBUG: Runtime 正在向 Telegram 推送文本: {text[:10]}..."
-                                )  # 加入这行
                                 yield event
                         else:
                             # No thinking extraction, stream as-is
@@ -417,9 +413,6 @@ class MultiProviderRuntime:
                                 data={"delta": {"type": "text_delta", "text": text}},
                             )
                             await self._notify_observers(event)
-                            print(
-                                f"DEBUG: Runtime 正在向 Telegram 推送文本: {text[:10]}..."
-                            )  # 加入这行
                             yield event
 
                     elif response.type == "tool_call":

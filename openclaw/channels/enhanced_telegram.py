@@ -42,7 +42,7 @@ class EnhancedTelegramChannel(ChannelPlugin):
 
         self._streaming_states = (
             {}
-        )  # 【新增】用于记录 {session_id: {"msg_id": xxx, "full_content": yyy}}
+        )  # Reacord {session_id: {"msg_id": xxx, "full_content": yyy}}
 
         # Setup connection manager with reconnection
         self._setup_connection_manager(
@@ -247,7 +247,7 @@ class EnhancedTelegramChannel(ChannelPlugin):
         chat = message.chat
         sender = message.from_user
 
-        self._last_chat_id = str(chat.id)  # 【新增】临时记住是谁在说话
+        self._last_chat_id = str(chat.id)  # Record the last chat ID for streaming
 
         # Determine chat type
         chat_type = "direct"
@@ -278,12 +278,12 @@ class EnhancedTelegramChannel(ChannelPlugin):
         # Pass to handler (with metrics tracking)
         await self._handle_message(inbound)
 
-    # 【新增】处理来自 Runtime 的事件，实现流式编辑消息
+    # [NEW] Deal with streaming text updates
     async def on_event(self, event: Any) -> None:
-        # 确保只处理文本事件
+        # ensure the text delta event
         if str(event.type).lower() != "eventtype.agent_text":
             if str(event.type).lower() == "eventtype.agent_turn_complete":
-                # 对话结束，清理状态
+                # done with this session, clean up state
                 self._streaming_states.pop(event.session_id, None)
             return
 
@@ -293,18 +293,17 @@ class EnhancedTelegramChannel(ChannelPlugin):
         if not text or not hasattr(self, "_last_chat_id"):
             return
 
-        # 逻辑判断：是这轮对话的第一个字吗？
+        # Check if we have an existing message to edit
         if session_id not in self._streaming_states:
-            # 1. 发送第一个气泡并获取 ID
+            # 1. No existing message, send a new one
             msg_id = await self.send_text(self._last_chat_id, text)
-            # 2. 存入状态，记录这个气泡的 ID 和目前的内容
+            # 2. Record the message ID and full content
             self._streaming_states[session_id] = {"msg_id": msg_id, "full_content": text}
         else:
-            # 3. 如果已经有气泡了，就更新它
+            # 3. Existing message, append text and edit
             state = self._streaming_states[session_id]
             state["full_content"] += text
 
-            # 调用 Telegram 原生接口进行编辑
             try:
                 await self._app.bot.edit_message_text(
                     chat_id=int(self._last_chat_id),
@@ -312,9 +311,9 @@ class EnhancedTelegramChannel(ChannelPlugin):
                     text=state["full_content"],
                 )
             except Exception as e:
-                # 忽略频繁更新导致的 Telegram 报错（常见于流太快时）
+                # Log but ignore edit errors
                 if "Message is not modified" not in str(e):
-                    logger.warning(f"编辑消息失败: {e}")
+                    logger.warning(f"Fail to edit message: {e}")
 
     async def _handle_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle Telegram errors"""

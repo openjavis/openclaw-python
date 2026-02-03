@@ -33,7 +33,7 @@ class ContextManager:
         "gpt-3.5-turbo": 16385,
         "gemini-3": 128000,
         "gemini-2.5": 128000,
-        "gemini-1.5": 128000,  # 确保 1.5 系列也能被识别
+        "gemini-1.5": 128000,  # sign up for gemini models
     }
 
     def __init__(self, model: str, max_tokens: int | None = None):

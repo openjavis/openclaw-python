@@ -153,22 +153,19 @@ class GeminiProvider(LLMProvider):
             generate_content_config = types.GenerateContentConfig(**config_params)
 
             # Use streaming generation
-            print("DEBUG: 准备调用 Google API...")  # 新增
             stream_response = await client.aio.models.generate_content_stream(
                 model=self.model,
                 contents=contents,
                 config=generate_content_config,
             )
-            print("DEBUG: API 调用已发起，开始迭代流...")  # 新增
 
             # Stream chunks
             full_text = []
             async for chunk in stream_response:
-                print(f"DEBUG: 收到 Chunk: {chunk.text[:10]}...")  # 新增
                 if chunk.text:
                     full_text.append(chunk.text)
                     yield LLMResponse(type="text_delta", content=chunk.text)
-                    # 这一行非常关键，防止 Windows 异步循环假死
+                    # Fix: Allow event loop to process other tasks in Windows
                     await asyncio.sleep(0.01)  # Yield control to event loop
 
             # Send completion
