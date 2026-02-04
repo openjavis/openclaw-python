@@ -109,7 +109,7 @@ class OpenClawServer:
 
         # Agent Runtime (shared by all channels)
         self.agent_runtime = AgentRuntime(
-            model=config.agent.get("model", "anthropic/claude-sonnet-4-20250514"),
+            model=config.agent.get("model", "gemini/gemini-3-flash-preview"),
             enable_context_management=True,
             max_retries=3,
         )
@@ -279,7 +279,7 @@ async def main():
             "bind": "loopback",
         },
         agent={
-            "model": "anthropic/claude-sonnet-4-20250514",
+            "model": "gemini/gemini-3-flash-preview",
             "max_tokens": 4000,
         },
     )

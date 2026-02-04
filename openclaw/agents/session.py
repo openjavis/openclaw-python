@@ -22,6 +22,7 @@ class Message(BaseModel):
     tool_calls: list[dict[str, Any]] | None = None
     tool_call_id: str | None = None
     name: str | None = None  # For tool results
+    images: list[str] | None = None  # Image URLs or paths
 
     def to_api_format(self) -> dict[str, Any]:
         """Convert to API format for LLM calls"""

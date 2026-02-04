@@ -1,68 +1,92 @@
-# ClawdBot Python - Docker Compose Configuration
-# Version: 0.3.0
-# SECURITY: For testing only - DO NOT use in production without review
+# OpenClaw Python - Docker Compose Configuration
+# Version: 0.6.0
+# Compatible with macOS 12.7.6 (Monterey)
 
 version: '3.8'
 
 services:
-  clawdbot:
-    build: .
-    container_name: clawdbot-test
+  openclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: openclaw-python
+    hostname: openclaw
     
-    # Security: Read-only root filesystem
-    read_only: true
-    
-    # Security: Drop all capabilities
-    cap_drop:
-      - ALL
-    
-    # Security: No new privileges
-    security_opt:
-      - no-new-privileges:true
-    
-    # Ports (localhost only for safety)
+    # Ports (localhost only for security)
     ports:
-      - "127.0.0.1:18789:18789"  # Gateway (localhost only)
-      - "127.0.0.1:8080:8080"    # Web UI (localhost only)
+      - "127.0.0.1:8765:8765"  # Gateway WebSocket API
     
-    # Environment variables (NEVER commit real keys!)
+    # Environment variables
+    # IMPORTANT: Create a .env file with your API keys
     environment:
-      # IMPORTANT: Set these via .env file or docker-compose override
+      # LLM API Keys (at least one required)
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       
-      # Demo mode (safe defaults)
-      - CLAWDBOT_ENV=demo
-      - CLAWDBOT_LOG_LEVEL=INFO
+      # Telegram Bot (optional)
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       
-    # Volumes (minimal, specific)
-    volumes:
-      # Writable temp directory
-      - /tmp
-      # Config directory (read-only recommended)
-      - ./demo-config:/home/clawdbot/.clawdbot:ro
+      # Discord Bot (optional)
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      
+      # Application settings
+      - OPENCLAW_ENV=${OPENCLAW_ENV:-production}
+      - OPENCLAW_LOG_LEVEL=${OPENCLAW_LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
     
-    # Resource limits
+    # Volumes for persistence
+    volumes:
+      # Session data (persistent)
+      - openclaw-workspace:/app/workspace
+      
+      # Logs (persistent)
+      - openclaw-logs:/app/logs
+      
+      # Optional: Mount .env file for API keys
+      # - ./.env:/app/.env:ro
+    
+    # Resource limits (adjust based on your system)
     deploy:
       resources:
         limits:
           cpus: '2.0'
-          memory: 2G
+          memory: 4G
         reservations:
           cpus: '0.5'
-          memory: 512M
+          memory: 1G
     
-    # Network isolation
+    # Network
     networks:
-      - clawdbot-net
+      - openclaw-net
     
     # Restart policy
     restart: unless-stopped
     
-    # Override command for demo
-    command: ["python", "-m", "clawdbot.cli", "status"]
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import openclaw; print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Optional: Web UI (future)
+  # openclaw-ui:
+  #   image: openclaw/ui:latest
+  #   ports:
+  #     - "127.0.0.1:3000:3000"
+  #   networks:
+  #     - openclaw-net
+  #   depends_on:
+  #     - openclaw
+
+volumes:
+  openclaw-workspace:
+    driver: local
+  openclaw-logs:
+    driver: local
 
 networks:
-  clawdbot-net:
+  openclaw-net:
     driver: bridge
-    internal: false  # Set to true for complete isolation

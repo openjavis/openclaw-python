@@ -237,6 +237,8 @@ class MultiProviderRuntime:
         message: str,
         tools: list[AgentTool] | None = None,
         max_tokens: int = 4096,
+        images: list[str] | None = None,
+        system_prompt: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """
         Run an agent turn with the configured provider
@@ -255,6 +257,8 @@ class MultiProviderRuntime:
             message: User message
             tools: Optional list of tools
             max_tokens: Maximum tokens to generate
+            images: Optional list of image URLs
+            system_prompt: Optional system prompt (injected at session start)
 
         Yields:
             AgentEvent objects
@@ -266,14 +270,14 @@ class MultiProviderRuntime:
         if self.queue_manager:
 
             async def queued_execution():
-                async for event in self._run_turn_internal(session, message, tools, max_tokens):
+                async for event in self._run_turn_internal(session, message, tools, max_tokens, images, system_prompt):
                     yield event
 
             # This is a generator, need to handle differently
-            async for event in self._run_turn_internal(session, message, tools, max_tokens):
+            async for event in self._run_turn_internal(session, message, tools, max_tokens, images, system_prompt):
                 yield event
         else:
-            async for event in self._run_turn_internal(session, message, tools, max_tokens):
+            async for event in self._run_turn_internal(session, message, tools, max_tokens, images, system_prompt):
                 yield event
 
     async def _run_turn_internal(
@@ -282,10 +286,28 @@ class MultiProviderRuntime:
         message: str,
         tools: list[AgentTool],
         max_tokens: int,
+        images: list[str] | None = None,
+        system_prompt: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Internal run turn implementation"""
-        # Add user message
-        session.add_user_message(message)
+        # Inject system prompt at the start of the session (only if no messages yet)
+        if system_prompt and len(session.messages) == 0:
+            session.add_system_message(system_prompt)
+            logger.info(f"✨ System prompt injected ({len(system_prompt)} chars)")
+        
+        # Add user message (with images if provided)
+        if images:
+            # Store images in session metadata for this message
+            session.add_user_message(message)
+            # Add images metadata to the last message
+            if session.messages:
+                last_msg = session.messages[-1]
+                if not hasattr(last_msg, 'images'):
+                    last_msg.images = images
+                else:
+                    last_msg.images = images
+        else:
+            session.add_user_message(message)
 
         # Check context window and compact if needed
         if self.compaction_manager and self.enable_context_management:
@@ -349,7 +371,9 @@ class MultiProviderRuntime:
                 # Convert session messages to LLM format
                 llm_messages = []
                 for msg in session.get_messages():
-                    llm_messages.append(LLMMessage(role=msg.role, content=msg.content))
+                    # Include images if present
+                    msg_images = getattr(msg, 'images', None)
+                    llm_messages.append(LLMMessage(role=msg.role, content=msg.content, images=msg_images))
 
                 # Format tools for provider
                 tools_param = None
@@ -360,16 +384,17 @@ class MultiProviderRuntime:
                             "function": {
                                 "name": tool.name,
                                 "description": tool.description,
-                                "parameters": tool.parameters,
+                                "parameters": tool.get_schema(),
                             },
                         }
                         for tool in tools
                     ]
 
-                # Stream from provider
+                # Stream from provider (may need multiple rounds for tool calling)
                 accumulated_text = ""
                 accumulated_thinking = ""
                 tool_calls = []
+                needs_tool_response = False
 
                 async for response in self.provider.stream(
                     messages=llm_messages, tools=tools_param, max_tokens=max_tokens
@@ -509,14 +534,67 @@ class MultiProviderRuntime:
                         if final_text or tool_calls:
                             session.add_assistant_message(final_text, tool_calls)
 
-                        # Record success for failover manager
-                        if self.fallback_manager:
-                            self.fallback_manager.record_success(current_model)
+                        # If there were tool calls, we need to continue the conversation
+                        # to let the model generate a response based on tool results
+                        if tool_calls:
+                            logger.info(f"Tool calls completed, will request final response from model")
+                            needs_tool_response = True
+                            # Don't break yet - we'll make another API call after this loop
+                        else:
+                            # Record success for failover manager
+                            if self.fallback_manager:
+                                self.fallback_manager.record_success(current_model)
 
                         break
 
                     elif response.type == "error":
                         raise Exception(response.content)
+
+                # If we need to get a response after tool execution, make another API call
+                if needs_tool_response:
+                    logger.info("Making follow-up API call to get response based on tool results")
+                    
+                    # Rebuild messages with tool results
+                    llm_messages = []
+                    for msg in session.get_messages():
+                        msg_images = getattr(msg, 'images', None)
+                        llm_messages.append(LLMMessage(role=msg.role, content=msg.content, images=msg_images))
+                    
+                    # Reset for second response
+                    accumulated_text = ""
+                    tool_calls = []
+                    
+                    # Stream the final response WITHOUT tools (to prevent infinite loop)
+                    # The model should now generate a text response based on tool results
+                    async for response in self.provider.stream(
+                        messages=llm_messages, tools=None, max_tokens=max_tokens
+                    ):
+                        if response.type == "text_delta":
+                            text = response.content
+                            accumulated_text += text
+                            
+                            # Stream text to user
+                            event = Event(
+                                type=EventType.AGENT_TEXT,
+                                source="agent-runtime",
+                                session_id=session.session_id if session else None,
+                                data={"delta": {"type": "text_delta", "text": text}},
+                            )
+                            await self._notify_observers(event)
+                            yield event
+                            
+                        elif response.type == "done":
+                            # Save final response
+                            if accumulated_text:
+                                session.add_assistant_message(accumulated_text, [])
+                            break
+                            
+                        elif response.type == "error":
+                            raise Exception(response.content)
+                    
+                    # Record success
+                    if self.fallback_manager:
+                        self.fallback_manager.record_success(current_model)
 
                 # Success, exit retry loop
                 event = Event(

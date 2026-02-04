@@ -88,12 +88,68 @@ class GeminiProvider(LLMProvider):
                 system_instruction = msg.content
                 continue
 
+            # Handle tool messages (function responses)
+            if msg.role == "tool":
+                # Tool result should be in user role with function_response part
+                parts = [types.Part.from_function_response(
+                    name=getattr(msg, 'name', 'unknown_function'),
+                    response={"result": msg.content}
+                )]
+                content = types.Content(role="user", parts=parts)
+                gemini_contents.append(content)
+                continue
+
             # Gemini uses 'user' and 'model' roles
             role = "model" if msg.role == "assistant" else "user"
 
-            # Create Content object
-            content = types.Content(role=role, parts=[types.Part.from_text(text=msg.content)])
-            gemini_contents.append(content)
+            # Create parts list (text + optional images + optional tool calls)
+            parts = []
+            
+            # Add images first (if any)
+            if hasattr(msg, 'images') and msg.images:
+                for image_url in msg.images:
+                    try:
+                        # Download image and convert to bytes
+                        import httpx
+                        response = httpx.get(image_url, timeout=30.0)
+                        if response.status_code == 200:
+                            image_bytes = response.content
+                            # Determine MIME type from URL or content
+                            mime_type = "image/jpeg"  # Default
+                            if ".png" in image_url.lower():
+                                mime_type = "image/png"
+                            elif ".gif" in image_url.lower():
+                                mime_type = "image/gif"
+                            elif ".webp" in image_url.lower():
+                                mime_type = "image/webp"
+                            
+                            # Create image part
+                            parts.append(types.Part.from_bytes(
+                                data=image_bytes,
+                                mime_type=mime_type
+                            ))
+                            logger.info(f"Added image to Gemini request: {image_url[:50]}...")
+                        else:
+                            logger.warning(f"Failed to download image: {image_url} (status: {response.status_code})")
+                    except Exception as e:
+                        logger.error(f"Error loading image {image_url}: {e}")
+            
+            # Add tool calls if present (for assistant messages)
+            if hasattr(msg, 'tool_calls') and msg.tool_calls and role == "model":
+                for tc in msg.tool_calls:
+                    parts.append(types.Part.from_function_call(
+                        name=tc.get("name"),
+                        args=tc.get("arguments", {})
+                    ))
+            
+            # Add text content if present
+            if msg.content:
+                parts.append(types.Part.from_text(text=msg.content))
+
+            # Create Content object with all parts
+            if parts:  # Only add if there are parts
+                content = types.Content(role=role, parts=parts)
+                gemini_contents.append(content)
 
         return gemini_contents, system_instruction
 
@@ -136,9 +192,32 @@ class GeminiProvider(LLMProvider):
                     thinking_level=thinking_mode.upper()
                 )
 
-            # Add tools if specified (e.g., Google Search)
-            if tools or kwargs.get("enable_search"):
-                config_params["tools"] = [types.Tool(googleSearch=types.GoogleSearch())]
+            # Add tools if specified
+            gemini_tools = []
+            if tools:
+                # Convert custom tools to Gemini function declarations
+                function_declarations = []
+                for tool in tools:
+                    if tool.get("type") == "function" and "function" in tool:
+                        func_spec = tool["function"]
+                        function_declarations.append(
+                            types.FunctionDeclaration(
+                                name=func_spec.get("name"),
+                                description=func_spec.get("description", ""),
+                                parameters=func_spec.get("parameters", {}),
+                            )
+                        )
+                
+                if function_declarations:
+                    gemini_tools.append(types.Tool(function_declarations=function_declarations))
+                    logger.info(f"Added {len(function_declarations)} function declarations to Gemini")
+            
+            # Add Google Search if requested
+            if kwargs.get("enable_search"):
+                gemini_tools.append(types.Tool(google_search=types.GoogleSearch()))
+            
+            if gemini_tools:
+                config_params["tools"] = gemini_tools
 
             # Add generation parameters
             if max_tokens:
@@ -161,12 +240,33 @@ class GeminiProvider(LLMProvider):
 
             # Stream chunks
             full_text = []
+            tool_calls = []
+            
             async for chunk in stream_response:
+                # Handle text content
                 if chunk.text:
                     full_text.append(chunk.text)
                     yield LLMResponse(type="text_delta", content=chunk.text)
-                    # Fix: Allow event loop to process other tasks in Windows
                     await asyncio.sleep(0.01)  # Yield control to event loop
+                
+                # Handle function calls
+                if hasattr(chunk, 'candidates') and chunk.candidates:
+                    for candidate in chunk.candidates:
+                        if hasattr(candidate, 'content') and candidate.content:
+                            for part in candidate.content.parts:
+                                if hasattr(part, 'function_call') and part.function_call:
+                                    fc = part.function_call
+                                    tool_call = {
+                                        "id": f"call_{fc.name}_{len(tool_calls)}",
+                                        "name": fc.name,
+                                        "arguments": dict(fc.args) if fc.args else {}
+                                    }
+                                    tool_calls.append(tool_call)
+                                    logger.info(f"Gemini function call: {fc.name}")
+
+            # Send tool calls if any
+            if tool_calls:
+                yield LLMResponse(type="tool_call", content=None, tool_calls=tool_calls)
 
             # Send completion
             complete_text = "".join(full_text)

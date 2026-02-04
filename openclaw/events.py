@@ -139,8 +139,10 @@ class Event:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization"""
+        # Handle both EventType enum and string type
+        event_type = self.type.value if isinstance(self.type, EventType) else self.type
         return {
-            "type": self.type.value,
+            "type": event_type,
             "source": self.source,
             "data": self.data,
             "timestamp": self.timestamp.isoformat(),

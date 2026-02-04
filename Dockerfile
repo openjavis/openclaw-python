@@ -1,54 +1,63 @@
-# ClawdBot Python - Production Docker Image
-# Version: 0.4.0
+# OpenClaw Python - Production Docker Image
+# Optimized for macOS 12.7.6 (Monterey) + Intel x86_64
 
-FROM python:3.11-slim
+FROM python:3.12-slim
+
+LABEL maintainer="OpenClaw"
+LABEL version="0.6.0"
+LABEL description="OpenClaw AI Assistant Platform"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     ca-certificates \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv (as root, before switching users)
+# Install uv (fast Python package manager)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Create non-root user
-RUN useradd -m -u 1000 clawdbot && \
-    mkdir -p /app /home/clawdbot/.clawdbot && \
-    chown -R clawdbot:clawdbot /app /home/clawdbot
+RUN useradd -m -u 1000 openclaw && \
+    mkdir -p /app /home/openclaw/.openclaw && \
+    chown -R openclaw:openclaw /app /home/openclaw
 
 WORKDIR /app
 
-# Copy dependency files first (for better caching)
-COPY --chown=clawdbot:clawdbot pyproject.toml uv.lock* README.md LICENSE ./
+# Copy dependency files first (for better Docker layer caching)
+COPY --chown=openclaw:openclaw pyproject.toml README.md ./
 
 # Switch to non-root user
-USER clawdbot
+USER openclaw
 
-# Install dependencies using uv
-# Use --no-cache to avoid cache issues in Docker
+# Install Python dependencies using uv
 RUN uv venv && \
-    uv sync --no-cache --no-dev
+    uv pip install --no-cache-dir -e .
 
 # Copy application code
-COPY --chown=clawdbot:clawdbot clawdbot ./clawdbot/
-COPY --chown=clawdbot:clawdbot skills ./skills/
-COPY --chown=clawdbot:clawdbot extensions ./extensions/
+COPY --chown=openclaw:openclaw openclaw ./openclaw/
+COPY --chown=openclaw:openclaw skills ./skills/
+COPY --chown=openclaw:openclaw extensions ./extensions/
+COPY --chown=openclaw:openclaw examples ./examples/
+COPY --chown=openclaw:openclaw start_full_featured.py ./
 
-# Set PATH to use venv
+# Create workspace directory
+RUN mkdir -p /app/workspace
+
+# Set environment variables
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app:$PYTHONPATH" \
-    VIRTUAL_ENV="/app/.venv"
+    VIRTUAL_ENV="/app/.venv" \
+    PYTHONUNBUFFERED=1
 
 # Expose ports
-# 18789: Gateway WebSocket
-# 8080: Web UI (optional)
-EXPOSE 18789 8080
+# 8765: Gateway WebSocket API
+EXPOSE 8765
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import clawdbot; print('OK')" || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import openclaw; print('OK')" || exit 1
 
-# Default command
-CMD ["python", "-m", "clawdbot.cli", "gateway", "start"]
+# Default command - run full-featured server
+CMD ["python", "start_full_featured.py"]

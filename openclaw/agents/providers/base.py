@@ -14,6 +14,7 @@ class LLMMessage:
 
     role: str
     content: Any
+    images: list[str] | None = None  # List of image URLs or file paths
 
 
 @dataclass

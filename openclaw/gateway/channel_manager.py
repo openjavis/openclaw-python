@@ -125,6 +125,8 @@ class ChannelManager:
         self,
         default_runtime: AgentRuntime | None = None,
         session_manager: Any = None,
+        tools: list | None = None,
+        system_prompt: str | None = None,
     ):
         """
         Initialize ChannelManager
@@ -132,9 +134,13 @@ class ChannelManager:
         Args:
             default_runtime: Default AgentRuntime for channels that don't have their own
             session_manager: Session manager for creating/retrieving sessions
+            tools: List of tools available to the agent
+            system_prompt: Optional system prompt (skills, capabilities, etc.)
         """
         self.default_runtime = default_runtime
         self.session_manager = session_manager
+        self.tools = tools or []
+        self.system_prompt = system_prompt
 
         # Channel plugin classes (for lazy instantiation)
         self._channel_classes: dict[str, type[ChannelPlugin]] = {}
@@ -630,21 +636,45 @@ class ChannelManager:
 
                 if self.session_manager:
                     session = self.session_manager.get_session(session_id)
+                    logger.info(f"[{channel_id}] Session created/retrieved: {session_id}")
 
                 # Process through Agent Runtime
                 response_text = ""
+                logger.info(f"[{channel_id}] Starting runtime.run_turn with {len(self.tools)} tools")
 
-                async for event in runtime.run_turn(session, message.text):
+                # Extract photo URL from metadata if present
+                images = None
+                if message.metadata and message.metadata.get("photo_url"):
+                    images = [message.metadata["photo_url"]]
+                    logger.info(f"[{channel_id}] Including photo in request: {images[0][:80]}...")
+
+                async for event in runtime.run_turn(
+                    session, 
+                    message.text, 
+                    tools=self.tools, 
+                    images=images,
+                    system_prompt=self.system_prompt
+                ):
+                    event_type_str = str(getattr(event, 'type', 'unknown'))
+                    logger.debug(f"[{channel_id}] Event received: type={event_type_str}")
                     if hasattr(event, "type"):
-                        if event.type == "text":
-                            response_text += event.data.get("text", "")
-                        elif event.type == "turn_complete":
+                        # Handle EventType enum or string
+                        event_type_value = event.type.value if hasattr(event.type, 'value') else str(event.type)
+                        
+                        if event_type_value == "agent.text" or event_type_value == "text":
+                            delta_text = event.data.get("delta", {}).get("text", "")
+                            response_text += delta_text
+                            logger.debug(f"[{channel_id}] Text delta: {delta_text[:50]}...")
+                        elif event_type_value == "agent.turn_complete" or event_type_value == "turn_complete":
+                            logger.info(f"[{channel_id}] Turn complete")
                             break
                     elif isinstance(event, dict):
                         if event.get("type") == "text":
                             response_text += event.get("text", "")
                         elif event.get("type") == "turn_complete":
                             break
+
+                logger.info(f"[{channel_id}] Accumulated response length: {len(response_text)}")
 
                 # Send response back
                 if response_text:
@@ -654,6 +684,8 @@ class ChannelManager:
                         reply_to=message.message_id,
                     )
                     logger.info(f"📤 [{channel_id}] Sent response to {message.chat_id}")
+                else:
+                    logger.warning(f"[{channel_id}] No response text generated")
 
             except Exception as e:
                 logger.error(f"Error processing message: {e}")

@@ -51,7 +51,7 @@ async def main():
 
     # Create components
     runtime = AgentRuntime(
-        model="google/gemini-2.5-flash", enable_context_management=True, max_retries=3
+        model="gemini/gemini-3-flash-preview", enable_context_management=True, max_retries=3
     )
 
     session_manager = SessionManager(workspace)
