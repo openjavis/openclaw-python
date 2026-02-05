@@ -397,7 +397,10 @@ class MultiProviderRuntime:
                 needs_tool_response = False
 
                 async for response in self.provider.stream(
-                    messages=llm_messages, tools=tools_param, max_tokens=max_tokens
+                    messages=llm_messages, 
+                    tools=tools_param, 
+                    max_tokens=max_tokens,
+                    **self.extra_params  # Pass enable_search and other params
                 ):
                     if response.type == "text_delta":
                         text = response.content
@@ -560,14 +563,25 @@ class MultiProviderRuntime:
                         msg_images = getattr(msg, 'images', None)
                         llm_messages.append(LLMMessage(role=msg.role, content=msg.content, images=msg_images))
                     
+                    # Add explicit instruction to NOT use tools
+                    # This is a workaround for Gemini's AFC (Automatic Function Calling)
+                    llm_messages.append(LLMMessage(
+                        role="user",
+                        content="Based on the tool results above, please provide a natural language response to the user. Do NOT call any more tools."
+                    ))
+                    
                     # Reset for second response
                     accumulated_text = ""
                     tool_calls = []
                     
                     # Stream the final response WITHOUT tools (to prevent infinite loop)
                     # The model should now generate a text response based on tool results
+                    # IMPORTANT: Pass empty list [] instead of None to truly disable tools
                     async for response in self.provider.stream(
-                        messages=llm_messages, tools=None, max_tokens=max_tokens
+                        messages=llm_messages, 
+                        tools=[], 
+                        max_tokens=max_tokens,
+                        **self.extra_params  # Pass enable_search and other params
                     ):
                         if response.type == "text_delta":
                             text = response.content

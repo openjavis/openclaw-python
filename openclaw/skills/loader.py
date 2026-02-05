@@ -4,9 +4,11 @@ import logging
 import os
 import re
 from pathlib import Path
+from typing import Optional
 
 import yaml
 
+from .eligibility import SkillEligibilityChecker
 from .types import Skill, SkillMetadata
 
 logger = logging.getLogger(__name__)
@@ -15,8 +17,10 @@ logger = logging.getLogger(__name__)
 class SkillLoader:
     """Loads skills from various sources"""
 
-    def __init__(self):
+    def __init__(self, config: Optional[dict] = None):
         self.skills: dict[str, Skill] = {}
+        self.config = config or {}
+        self.eligibility_checker = SkillEligibilityChecker(self.config)
 
     def load_from_directory(self, directory: Path, source: str) -> list[Skill]:
         """Load skills from a directory"""
@@ -92,34 +96,8 @@ class SkillLoader:
         return content.strip()
 
     def check_eligibility(self, skill: Skill) -> tuple[bool, str | None]:
-        """Check if a skill is eligible to run"""
-        # Check OS requirements
-        if skill.metadata.os:
-            current_os = os.name
-            if "darwin" in skill.metadata.os and current_os != "posix":
-                return False, "Requires macOS"
-            if "linux" in skill.metadata.os and current_os != "posix":
-                return False, "Requires Linux"
-            if "windows" in skill.metadata.os and current_os != "nt":
-                return False, "Requires Windows"
-
-        # Check required binaries
-        for binary in skill.metadata.requires_bins:
-            if not self._check_binary_exists(binary):
-                return False, f"Missing required binary: {binary}"
-
-        # Check required environment variables
-        for env_var in skill.metadata.requires_env:
-            if not os.getenv(env_var):
-                return False, f"Missing required environment variable: {env_var}"
-
-        return True, None
-
-    def _check_binary_exists(self, binary: str) -> bool:
-        """Check if a binary exists in PATH"""
-        from shutil import which
-
-        return which(binary) is not None
+        """Check if a skill is eligible to run (uses enhanced checker)"""
+        return self.eligibility_checker.check(skill)
 
     def load_all_skills(self) -> dict[str, Skill]:
         """Load skills from all sources with precedence"""

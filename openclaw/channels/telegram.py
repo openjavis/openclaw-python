@@ -2,11 +2,12 @@
 
 import logging
 from datetime import UTC, datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
+from ..channels.chat_commands import ChatCommandExecutor, ChatCommandParser
 from .base import ChannelCapabilities, ChannelPlugin, InboundMessage
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,9 @@ class TelegramChannel(ChannelPlugin):
         )
         self._app: Application | None = None
         self._bot_token: str | None = None
+        self._command_parser: Optional[ChatCommandParser] = None
+        self._command_executor: Optional[ChatCommandExecutor] = None
+        self._owner_id: Optional[str] = None
 
     async def start(self, config: dict[str, Any]) -> None:
         """Start Telegram bot"""
@@ -36,14 +40,22 @@ class TelegramChannel(ChannelPlugin):
         if not self._bot_token:
             raise ValueError("Telegram bot token not provided")
 
+        # Get owner ID for command permissions
+        self._owner_id = config.get("ownerId") or config.get("owner_id")
+
         logger.info("Starting Telegram channel...")
+
+        # Initialize chat command system
+        self._command_parser = ChatCommandParser()
+        # Note: command_executor will be initialized once we have session_manager
+        # This would typically be set via set_message_handler or similar
 
         # Create application
         self._app = Application.builder().token(self._bot_token).build()
 
-        # Add message handler
+        # Add message handler (now handles both commands and regular messages)
         self._app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_telegram_message)
+            MessageHandler(filters.TEXT, self._handle_telegram_message)
         )
 
         # Start bot
@@ -115,6 +127,10 @@ class TelegramChannel(ChannelPlugin):
             logger.error(f"Failed to send Telegram media: {e}", exc_info=True)
             raise
 
+    def set_command_executor(self, session_manager, agent_runtime) -> None:
+        """Set up command executor with session manager and agent runtime"""
+        self._command_executor = ChatCommandExecutor(session_manager, agent_runtime)
+
     async def _handle_telegram_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -125,6 +141,33 @@ class TelegramChannel(ChannelPlugin):
         message = update.message
         chat = message.chat
         sender = message.from_user
+
+        # Check for chat commands
+        if self._command_parser:
+            command = self._command_parser.parse(message.text)
+            if command and self._command_executor:
+                session_id = f"telegram:{chat.id}"
+                user_id = str(sender.id)
+                is_owner = self._owner_id and user_id == self._owner_id
+
+                try:
+                    response = await self._command_executor.execute(
+                        command, session_id, user_id, is_owner
+                    )
+                    await self._app.bot.send_message(
+                        chat_id=chat.id,
+                        text=response,
+                        reply_to_message_id=message.message_id
+                    )
+                    return
+                except Exception as e:
+                    logger.error(f"Error executing command: {e}", exc_info=True)
+                    await self._app.bot.send_message(
+                        chat_id=chat.id,
+                        text=f"❌ Error: {str(e)}",
+                        reply_to_message_id=message.message_id
+                    )
+                    return
 
         # Determine chat type
         chat_type = "direct"

@@ -214,10 +214,22 @@ class GeminiProvider(LLMProvider):
             
             # Add Google Search if requested
             if kwargs.get("enable_search"):
+                if not gemini_tools:
+                    gemini_tools = []
                 gemini_tools.append(types.Tool(google_search=types.GoogleSearch()))
             
             if gemini_tools:
                 config_params["tools"] = gemini_tools
+            
+            # CRITICAL: Disable Automatic Function Calling when tools is empty or None
+            # This prevents Gemini from inventing function calls
+            if (tools is None or tools == []) and not kwargs.get("enable_search"):
+                config_params["tool_config"] = types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(
+                        mode=types.FunctionCallingConfigMode.NONE
+                    )
+                )
+                logger.info("🚫 AFC disabled - no tool calling allowed")
 
             # Add generation parameters
             if max_tokens:
@@ -253,16 +265,18 @@ class GeminiProvider(LLMProvider):
                 if hasattr(chunk, 'candidates') and chunk.candidates:
                     for candidate in chunk.candidates:
                         if hasattr(candidate, 'content') and candidate.content:
-                            for part in candidate.content.parts:
-                                if hasattr(part, 'function_call') and part.function_call:
-                                    fc = part.function_call
-                                    tool_call = {
-                                        "id": f"call_{fc.name}_{len(tool_calls)}",
-                                        "name": fc.name,
-                                        "arguments": dict(fc.args) if fc.args else {}
-                                    }
-                                    tool_calls.append(tool_call)
-                                    logger.info(f"Gemini function call: {fc.name}")
+                            # Check if parts exists and is not None
+                            if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                                for part in candidate.content.parts:
+                                    if hasattr(part, 'function_call') and part.function_call:
+                                        fc = part.function_call
+                                        tool_call = {
+                                            "id": f"call_{fc.name}_{len(tool_calls)}",
+                                            "name": fc.name,
+                                            "arguments": dict(fc.args) if fc.args else {}
+                                        }
+                                        tool_calls.append(tool_call)
+                                        logger.info(f"Gemini function call: {fc.name}")
 
             # Send tool calls if any
             if tool_calls:
