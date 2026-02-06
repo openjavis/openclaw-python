@@ -101,7 +101,6 @@ docs/
 
 # Temporary analysis and implementation reports (keep locally, don't push)
 *_ANALYSIS.md
-*_IMPLEMENTATION.md
 *_SUMMARY.md
 REFACTOR_*.md
 AUTH_ID_*.md
@@ -109,3 +108,12 @@ AUTH_ID_*.md
 实现报告*.md
 分析报告*.md
 validate_*.py
+完整实现总结.md
+设备配对和安全机制说明.md
+
+# Keep these implementation docs (提交到 GitHub)
+!IMAGE_PROCESSING_IMPLEMENTATION.md
+!INTEGRATION_COMPLETE.md
+
+# Manual test scripts (keep locally, don't push)
+tests/manual/

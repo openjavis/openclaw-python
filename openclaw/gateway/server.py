@@ -30,6 +30,19 @@ from typing import Any
 import websockets
 from websockets.server import WebSocketServerProtocol
 
+from openclaw.gateway.auth import (
+    AuthMode,
+    authorize_gateway_connect,
+    is_loopback_address,
+    validate_auth_config,
+)
+from openclaw.gateway.error_codes import (
+    ErrorCode,
+    InvalidRequestError,
+    NotLinkedError,
+    UnavailableError,
+)
+
 from ..config import ClawdbotConfig
 from ..events import Event
 from .channel_manager import ChannelManager, discover_channel_plugins
