@@ -18,7 +18,7 @@ Usage:
 import asyncio
 import logging
 
-from openclaw.events import Event, EventType, get_event_bus, EventBus
+from openclaw.events import Event, EventBus, EventType, get_event_bus
 from openclaw.monitoring import setup_logging
 
 logger = logging.getLogger(__name__)

@@ -1,10 +1,11 @@
 """Test refactored components"""
 
 import asyncio
-from openclaw.events import Event, EventType, get_event_bus, reset_event_bus
-from openclaw.runtime_env import RuntimeEnv, RuntimeEnvManager
-from openclaw.monitoring import setup_logging
 from pathlib import Path
+
+from openclaw.events import Event, EventType, get_event_bus, reset_event_bus
+from openclaw.monitoring import setup_logging
+from openclaw.runtime_env import RuntimeEnv, RuntimeEnvManager
 
 
 async def test_events():

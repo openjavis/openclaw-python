@@ -15,8 +15,10 @@ Prerequisites:
 
 import asyncio
 import os
-from dotenv import load_dotenv  
-load_dotenv()  # Load .env file if present 
+
+from dotenv import load_dotenv
+
+load_dotenv()  # Load .env file if present
 from pathlib import Path
 
 from openclaw.agents.runtime import AgentRuntime

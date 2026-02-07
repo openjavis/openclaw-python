@@ -13,8 +13,8 @@ import asyncio
 import logging
 from pathlib import Path
 
-from openclaw.config.unified import OpenClawConfig, ConfigBuilder, load_config
-from openclaw.gateway.api import get_method_registry, MethodRegistry
+from openclaw.config.unified import ConfigBuilder, OpenClawConfig, load_config
+from openclaw.gateway.api import MethodRegistry, get_method_registry
 from openclaw.monitoring import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -72,11 +72,11 @@ async def demo_unified_config():
 
     # Configuration features
     print("Configuration features:")
-    print(f"  - Type-safe validation: ✓")
-    print(f"  - Nested configuration: ✓")
-    print(f"  - Default values: ✓")
-    print(f"  - JSON/YAML support: ✓")
-    print(f"  - Environment variables: ✓")
+    print("  - Type-safe validation: ✓")
+    print("  - Nested configuration: ✓")
+    print("  - Default values: ✓")
+    print("  - JSON/YAML support: ✓")
+    print("  - Environment variables: ✓")
     print()
 
 
@@ -162,7 +162,7 @@ async def demo_api_docs():
     registry = get_method_registry()
     docs = registry.generate_docs()
 
-    print(f"API Documentation:")
+    print("API Documentation:")
     print(f"  Total methods: {docs['total_methods']}")
     print()
 

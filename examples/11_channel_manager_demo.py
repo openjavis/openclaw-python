@@ -21,12 +21,12 @@ from pathlib import Path
 
 from openclaw.agents.runtime import AgentRuntime
 from openclaw.agents.session import SessionManager
+from openclaw.channels.enhanced_telegram import EnhancedTelegramChannel
 from openclaw.gateway import (
     ChannelManager,
     ChannelState,
     discover_channel_plugins,
 )
-from openclaw.channels.enhanced_telegram import EnhancedTelegramChannel
 from openclaw.monitoring import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -140,7 +140,7 @@ async def demo_channel_manager():
     # Get detailed status
     status = channel_manager.get_status("telegram")
     if status:
-        print(f"   Telegram status:")
+        print("   Telegram status:")
         print(f"      - State: {status.get('state')}")
         print(f"      - Enabled: {status.get('enabled')}")
 
