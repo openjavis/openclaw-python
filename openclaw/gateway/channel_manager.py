@@ -566,7 +566,7 @@ class ChannelManager:
         event_type = event_type_map.get(event_type_str, EventType.CHANNEL_ERROR)
 
         # Create unified Event
-        event = Event(type=event_type, source="channel-manager", channel_id=channel_id, data=data)
+        Event(type=event_type, source="channel-manager", channel_id=channel_id, data=data)
 
         # Notify legacy listeners (for backward compatibility)
         for listener in self._event_listeners:

@@ -48,7 +48,7 @@ def split_media_from_output(text: str) -> MediaParseResult:
 
     def replace_media(match: re.Match) -> str:
         nonlocal audio_as_voice
-        media_type = match.group(1)
+        match.group(1)
         url = match.group(2).strip()
 
         if url:

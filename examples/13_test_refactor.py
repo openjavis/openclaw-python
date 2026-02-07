@@ -38,8 +38,8 @@ async def test_runtime_env():
     print(f"  ✓ RuntimeEnv created: {env}")
 
     manager = RuntimeEnvManager()
-    prod = manager.create_env("prod", "anthropic/claude-opus-4")
-    dev = manager.create_env("dev", "anthropic/claude-haiku")
+    manager.create_env("prod", "anthropic/claude-opus-4")
+    manager.create_env("dev", "anthropic/claude-haiku")
 
     assert len(manager.list_envs()) == 2
     print(f"  ✓ RuntimeEnvManager works! Envs: {manager.list_envs()}")

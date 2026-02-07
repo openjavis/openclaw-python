@@ -75,7 +75,6 @@ async def get_reply(
 
     # Apply directive overrides
     think_level = think_result.think_level
-    verbose = verbose_result.verbose_level == "on" if verbose_result.verbose_level else None
 
     # Resolve workspace directory
     workspace_dir = merged_cfg.get("workspace", "./workspace")
@@ -83,7 +82,6 @@ async def get_reply(
     workspace_path.mkdir(parents=True, exist_ok=True)
 
     # Filter skills if specified
-    skill_filter = opts.skill_filter
 
     # Notify model selection
     if opts.on_model_selected:

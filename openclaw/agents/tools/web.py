@@ -50,7 +50,6 @@ class WebFetchTool(AgentTool):
         }
 
         # proxy support if needed, e.g., for environments with restricted internet access
-        proxies = "http://127.0.0.1:7890"
 
         if not url:
             return ToolResult(success=False, content="No URL provided", error="No URL provided")

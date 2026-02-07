@@ -133,7 +133,7 @@ class TestImageToolSandbox:
 
         # Should be able to access via filename (fallback to media/inbound)
         try:
-            result = await tool.execute(
+            await tool.execute(
                 {
                     "image": "test.png",
                     "prompt": "Test",
@@ -154,7 +154,7 @@ class TestImageToolAtPrefix:
 
         try:
             # @ prefix should be removed
-            result = await tool.execute(
+            await tool.execute(
                 {
                     "image": f"@{sample_image_file}",
                     "prompt": "Test",

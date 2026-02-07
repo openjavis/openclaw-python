@@ -334,7 +334,6 @@ class EnhancedTelegramChannel(ChannelPlugin):
         )
 
         self._last_chat_id = str(chat.id)  # Record the last chat ID for streaming
-        session_id = f"{self.id}-{chat.id}"  # Bulid session ID based on channel and chat ID for session management
 
         # Determine chat type
         chat_type = "direct"

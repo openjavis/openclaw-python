@@ -43,7 +43,7 @@ class BuiltinMemoryManager:
                 size INTEGER NOT NULL,
                 indexed_at INTEGER NOT NULL
             );
-            
+
             -- Chunks table
             CREATE TABLE IF NOT EXISTS chunks (
                 id TEXT PRIMARY KEY,
@@ -58,10 +58,10 @@ class BuiltinMemoryManager:
                 updated_at INTEGER NOT NULL,
                 FOREIGN KEY (path) REFERENCES files(path)
             );
-            
+
             CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);
             CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source);
-            
+
             -- FTS5 virtual table for full-text search
             CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
                 id UNINDEXED,
@@ -70,17 +70,17 @@ class BuiltinMemoryManager:
                 content='chunks',
                 content_rowid='rowid'
             );
-            
+
             -- FTS triggers
             CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
                 INSERT INTO chunks_fts(rowid, id, path, text)
                 VALUES (new.rowid, new.id, new.path, new.text);
             END;
-            
+
             CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
                 DELETE FROM chunks_fts WHERE rowid = old.rowid;
             END;
-            
+
             CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
                 DELETE FROM chunks_fts WHERE rowid = old.rowid;
                 INSERT INTO chunks_fts(rowid, id, path, text)
@@ -132,7 +132,7 @@ class BuiltinMemoryManager:
 
             # FTS5 query
             sql = f"""
-                SELECT 
+                SELECT
                     chunks.id,
                     chunks.path,
                     chunks.source,
@@ -218,7 +218,7 @@ class BuiltinMemoryManager:
 
                 self.db.execute(
                     """
-                    INSERT INTO chunks 
+                    INSERT INTO chunks
                     (id, path, source, start_line, end_line, hash, model, text, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -239,7 +239,7 @@ class BuiltinMemoryManager:
             stat = file_path.stat()
             self.db.execute(
                 """
-                INSERT OR REPLACE INTO files 
+                INSERT OR REPLACE INTO files
                 (path, source, hash, mtime, size, indexed_at)
                 VALUES (?, ?, ?, ?, ?, ?)
             """,

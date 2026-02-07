@@ -38,9 +38,9 @@ class TestSilentReplyToken:
 class TestToolingSection:
     def test_with_tools(self):
         section = build_tooling_section(["read_file", "write_file", "bash"])
-        assert any("## Tooling" in l for l in section)
-        assert any("read_file" in l for l in section)
-        assert any("TOOLS.md" in l for l in section)
+        assert any("## Tooling" in line for line in section)
+        assert any("read_file" in line for line in section)
+        assert any("TOOLS.md" in line for line in section)
 
     def test_empty_tools(self):
         assert build_tooling_section([]) == []
@@ -49,7 +49,7 @@ class TestToolingSection:
         section = build_tooling_section(
             ["custom_tool"], tool_summaries={"custom_tool": "Custom desc"}
         )
-        assert any("Custom desc" in l for l in section)
+        assert any("Custom desc" in line for line in section)
 
     def test_respects_order(self):
         section = build_tooling_section(["bash", "read_file", "write_file"])
@@ -60,14 +60,14 @@ class TestToolingSection:
 class TestToolCallStyleSection:
     def test_present(self):
         section = build_tool_call_style_section()
-        assert any("## Tool Call Style" in l for l in section)
-        assert any("narrate" in l.lower() for l in section)
+        assert any("## Tool Call Style" in line for line in section)
+        assert any("narrate" in line.lower() for line in section)
 
 
 class TestSafetySection:
     def test_present(self):
         section = build_safety_section()
-        assert any("## Safety" in l for l in section)
+        assert any("## Safety" in line for line in section)
 
     def test_key_constraints(self):
         text = "\n".join(build_safety_section()).lower()
@@ -78,14 +78,14 @@ class TestSafetySection:
 class TestCLIQuickReferenceSection:
     def test_present(self):
         section = build_cli_quick_reference_section()
-        assert any("## OpenClaw CLI Quick Reference" in l for l in section)
-        assert any("openclaw gateway start" in l for l in section)
+        assert any("## OpenClaw CLI Quick Reference" in line for line in section)
+        assert any("openclaw gateway start" in line for line in section)
 
 
 class TestSkillsSection:
     def test_with_prompt(self):
         section = build_skills_section("<skills/>", False, "read_file")
-        assert any("## Skills" in l for l in section)
+        assert any("## Skills" in line for line in section)
 
     def test_minimal_omits(self):
         assert build_skills_section("<skills/>", True, "read_file") == []
@@ -97,7 +97,7 @@ class TestSkillsSection:
 class TestMemorySection:
     def test_with_tools(self):
         section = build_memory_section(False, {"memory_search", "memory_get"}, "on")
-        assert any("## Memory Recall" in l for l in section)
+        assert any("## Memory Recall" in line for line in section)
 
     def test_minimal_omits(self):
         assert build_memory_section(True, {"memory_search"}, "on") == []
@@ -107,13 +107,13 @@ class TestMemorySection:
 
     def test_citations_off(self):
         section = build_memory_section(False, {"memory_search"}, "off")
-        assert any("Citations are disabled" in l for l in section)
+        assert any("Citations are disabled" in line for line in section)
 
 
 class TestSelfUpdateSection:
     def test_with_gateway(self):
         section = build_self_update_section(True, False)
-        assert any("## OpenClaw Self-Update" in l for l in section)
+        assert any("## OpenClaw Self-Update" in line for line in section)
 
     def test_no_gateway(self):
         assert build_self_update_section(False, False) == []
@@ -125,8 +125,8 @@ class TestSelfUpdateSection:
 class TestModelAliasesSection:
     def test_with_aliases(self):
         section = build_model_aliases_section(["- opus: claude-opus-4"], False)
-        assert any("## Model Aliases" in l for l in section)
-        assert any("opus" in l for l in section)
+        assert any("## Model Aliases" in line for line in section)
+        assert any("opus" in line for line in section)
 
     def test_minimal_omits(self):
         assert build_model_aliases_section(["- opus: claude"], True) == []
@@ -138,7 +138,7 @@ class TestModelAliasesSection:
 class TestDocsSection:
     def test_with_path(self):
         section = build_docs_section("/docs", False)
-        assert any("## Documentation" in l for l in section)
+        assert any("## Documentation" in line for line in section)
 
     def test_minimal_omits(self):
         assert build_docs_section("/docs", True) == []
@@ -150,8 +150,8 @@ class TestDocsSection:
 class TestTimeSection:
     def test_with_timezone(self):
         section = build_time_section("America/New_York")
-        assert any("## Current Date & Time" in l for l in section)
-        assert any("America/New_York" in l for l in section)
+        assert any("## Current Date & Time" in line for line in section)
+        assert any("America/New_York" in line for line in section)
 
     def test_no_timezone(self):
         assert build_time_section(None) == []
@@ -160,14 +160,14 @@ class TestTimeSection:
 class TestWorkspaceFilesNote:
     def test_present(self):
         section = build_workspace_files_note_section()
-        assert any("## Workspace Files (injected)" in l for l in section)
+        assert any("## Workspace Files (injected)" in line for line in section)
 
 
 class TestReplyTagsSection:
     def test_present(self):
         section = build_reply_tags_section(False)
-        assert any("## Reply Tags" in l for l in section)
-        assert any("reply_to_current" in l for l in section)
+        assert any("## Reply Tags" in line for line in section)
+        assert any("reply_to_current" in line for line in section)
 
     def test_minimal_omits(self):
         assert build_reply_tags_section(True) == []
@@ -176,8 +176,8 @@ class TestReplyTagsSection:
 class TestMessagingSection:
     def test_with_message_tool(self):
         section = build_messaging_section(False, {"message"})
-        assert any("## Messaging" in l for l in section)
-        assert any("message tool" in l for l in section)
+        assert any("## Messaging" in line for line in section)
+        assert any("message tool" in line for line in section)
 
     def test_silent_reply_instruction(self):
         section = build_messaging_section(False, {"message"})
@@ -191,7 +191,7 @@ class TestMessagingSection:
 class TestVoiceSection:
     def test_with_hint(self):
         section = build_voice_section(False, "Use TTS for voice.")
-        assert any("## Voice (TTS)" in l for l in section)
+        assert any("## Voice (TTS)" in line for line in section)
 
     def test_no_hint(self):
         assert build_voice_section(False, None) == []
@@ -204,8 +204,8 @@ class TestRuntimeSection:
     def test_with_info(self):
         info = {"agent_id": "test", "host": "localhost", "model": "claude-opus-4"}
         section = build_runtime_section(info, reasoning_level="on")
-        assert any("## Runtime" in l for l in section)
-        assert any("Reasoning: on" in l for l in section)
+        assert any("## Runtime" in line for line in section)
+        assert any("Reasoning: on" in line for line in section)
 
     def test_no_info(self):
         assert build_runtime_section(None) == []
@@ -214,8 +214,8 @@ class TestRuntimeSection:
 class TestHeartbeatsSection:
     def test_with_prompt(self):
         section = build_heartbeats_section("ping", False)
-        assert any("## Heartbeats" in l for l in section)
-        assert any("HEARTBEAT_OK" in l for l in section)
+        assert any("## Heartbeats" in line for line in section)
+        assert any("HEARTBEAT_OK" in line for line in section)
 
     def test_minimal_omits(self):
         assert build_heartbeats_section("ping", True) == []
@@ -225,7 +225,7 @@ class TestSandboxSection:
     def test_enabled(self):
         info = {"enabled": True, "workspace_dir": "/sandbox", "workspace_access": "rw"}
         section = build_sandbox_section(info)
-        assert any("## Sandbox" in l for l in section)
+        assert any("## Sandbox" in line for line in section)
 
     def test_disabled(self):
         assert build_sandbox_section({"enabled": False}) == []
@@ -244,7 +244,7 @@ class TestSandboxSection:
 class TestUserIdentitySection:
     def test_with_owner(self):
         section = build_user_identity_section("Owner: +123", False)
-        assert any("## User Identity" in l for l in section)
+        assert any("## User Identity" in line for line in section)
 
     def test_minimal_omits(self):
         assert build_user_identity_section("Owner: +123", True) == []
@@ -256,8 +256,8 @@ class TestUserIdentitySection:
 class TestSilentRepliesSection:
     def test_present(self):
         section = build_silent_replies_section(False)
-        assert any("## Silent Replies" in l for l in section)
-        assert any(SILENT_REPLY_TOKEN in l for l in section)
+        assert any("## Silent Replies" in line for line in section)
+        assert any(SILENT_REPLY_TOKEN in line for line in section)
 
     def test_minimal_omits(self):
         assert build_silent_replies_section(True) == []
@@ -266,7 +266,7 @@ class TestSilentRepliesSection:
 class TestReactionGuidanceSection:
     def test_minimal_mode(self):
         section = build_reaction_guidance_section({"level": "minimal", "channel": "telegram"})
-        assert any("## Reactions" in l for l in section)
+        assert any("## Reactions" in line for line in section)
         text = "\n".join(section)
         assert "MINIMAL" in text
 
@@ -282,7 +282,7 @@ class TestReactionGuidanceSection:
 class TestReasoningFormatSection:
     def test_with_hint(self):
         section = build_reasoning_format_section("Use <thinking> tags.")
-        assert any("## Reasoning Format" in l for l in section)
+        assert any("## Reasoning Format" in line for line in section)
 
     def test_none(self):
         assert build_reasoning_format_section(None) == []

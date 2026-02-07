@@ -57,8 +57,8 @@ async def demo_settings_manager():
 
     # Settings Manager for multiple workspaces
     manager = SettingsManager()
-    ws1 = manager.get_workspace_settings(Path("./workspace1"))
-    ws2 = manager.get_workspace_settings(Path("./workspace2"))
+    manager.get_workspace_settings(Path("./workspace1"))
+    manager.get_workspace_settings(Path("./workspace2"))
     print(f"\n✅ Managing {len(manager.list_workspaces())} workspaces")
 
 
@@ -113,7 +113,7 @@ async def demo_message_summarization():
     # Incremental summarization
     new_messages = [{"role": "user", "content": "What about rate limiting?"}]
 
-    updated_summary = await summarizer.incremental_summarize(
+    await summarizer.incremental_summarize(
         summary_compressed, new_messages, strategy=SummarizationStrategy.COMPRESS
     )
     print("\n✅ Incremental update completed")
