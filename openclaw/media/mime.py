@@ -55,30 +55,25 @@ EXT_BY_MIME = {
 }
 
 # Extension to MIME mapping
-MIME_BY_EXT = {
-    ext: mime for mime, ext in EXT_BY_MIME.items()
-}
+MIME_BY_EXT = {ext: mime for mime, ext in EXT_BY_MIME.items()}
 MIME_BY_EXT[".jpeg"] = "image/jpeg"
 
 # Audio file extensions
-AUDIO_FILE_EXTENSIONS = {
-    ".aac", ".flac", ".m4a", ".mp3", ".oga", ".ogg", ".opus", ".wav"
-}
+AUDIO_FILE_EXTENSIONS = {".aac", ".flac", ".m4a", ".mp3", ".oga", ".ogg", ".opus", ".wav"}
 
 
 def normalize_header_mime(mime: str | None) -> str | None:
     """
     Normalize MIME from HTTP header (matches TS normalizeHeaderMime).
-    
+
     Args:
         mime: MIME type from header
-    
+
     Returns:
         Normalized MIME type
     """
     if not mime:
         return None
-    
     # Split on ; to remove charset etc.
     cleaned = mime.split(";")[0].strip().lower()
     return cleaned if cleaned else None
@@ -87,10 +82,10 @@ def normalize_header_mime(mime: str | None) -> str | None:
 def extension_for_mime(mime: str) -> str | None:
     """
     Get file extension for MIME type (matches TS extensionForMime).
-    
+
     Args:
         mime: MIME type
-    
+
     Returns:
         File extension (with dot) or None
     """
@@ -101,22 +96,22 @@ def extension_for_mime(mime: str) -> str | None:
 def mime_for_extension(ext: str) -> str | None:
     """
     Get MIME type for file extension.
-    
+
     Args:
         ext: File extension (with or without dot)
-    
+
     Returns:
         MIME type or None
     """
     if not ext.startswith("."):
         ext = f".{ext}"
-    
+
     ext_lower = ext.lower()
-    
+
     # Try our mapping first
     if ext_lower in MIME_BY_EXT:
         return MIME_BY_EXT[ext_lower]
-    
+
     # Fallback to mimetypes
     mime, _ = mimetypes.guess_type(f"file{ext}")
     return mime
@@ -125,11 +120,11 @@ def mime_for_extension(ext: str) -> str | None:
 def detect_mime(file_path: Path | str | None = None, buffer: bytes | None = None) -> str | None:
     """
     Detect MIME type from file or buffer (matches TS detectMime).
-    
+
     Args:
         file_path: File path
         buffer: File buffer
-    
+
     Returns:
         MIME type or None
     """
@@ -137,13 +132,11 @@ def detect_mime(file_path: Path | str | None = None, buffer: bytes | None = None
     if buffer:
         try:
             import filetype
-            
             kind = filetype.guess(buffer)
             if kind:
                 return kind.mime
         except ImportError:
             logger.debug("filetype package not available, using fallback")
-    
     # Fallback to extension
     if file_path:
         path_obj = Path(file_path) if isinstance(file_path, str) else file_path
@@ -152,39 +145,37 @@ def detect_mime(file_path: Path | str | None = None, buffer: bytes | None = None
             mime = mime_for_extension(ext)
             if mime:
                 return mime
-    
     # Final fallback to mimetypes
     if file_path:
         mime, _ = mimetypes.guess_type(str(file_path))
         return mime
-    
     return None
 
 
 def media_kind_from_mime(mime: str | None) -> MediaKind:
     """
     Get media kind from MIME type (matches TS mediaKindFromMime).
-    
+
     Args:
         mime: MIME type
-    
+
     Returns:
         MediaKind
     """
     if not mime:
         return MediaKind.UNKNOWN
-    
+
     mime_lower = mime.lower().strip()
-    
+
     if mime_lower.startswith("image/"):
         return MediaKind.IMAGE
-    
+
     if mime_lower.startswith("audio/"):
         return MediaKind.AUDIO
-    
+
     if mime_lower.startswith("video/"):
         return MediaKind.VIDEO
-    
+
     # Document types
     if mime_lower in {
         "application/pdf",
@@ -199,7 +190,6 @@ def media_kind_from_mime(mime: str | None) -> MediaKind:
         "text/csv",
     }:
         return MediaKind.DOCUMENT
-    
     return MediaKind.UNKNOWN
 
 
