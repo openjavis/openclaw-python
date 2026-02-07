@@ -14,7 +14,7 @@ class MessageTool(AgentTool):
     def __init__(self, channel_registry):
         super().__init__()
         self.name = "message"
-        self.description = "Send messages to messaging channels"
+        self.description = "Send messages (text and media) to messaging channels. Can send photos, images, and other media with optional captions."
         self.channel_registry = channel_registry
 
     def get_schema(self) -> dict[str, Any]:
@@ -26,21 +26,35 @@ class MessageTool(AgentTool):
                     "description": "Channel ID (telegram, discord, slack, whatsapp, webchat)",
                 },
                 "target": {"type": "string", "description": "Target user/chat ID"},
-                "text": {"type": "string", "description": "Message text"},
+                "text": {"type": "string", "description": "Message text or caption for media"},
                 "reply_to": {"type": "string", "description": "Message ID to reply to (optional)"},
+                "media_url": {"type": "string", "description": "URL of media file to send (photo, image, video, etc.) - optional"},
+                "media_type": {
+                    "type": "string", 
+                    "enum": ["photo", "video", "document", "audio"],
+                    "description": "Type of media to send - optional, defaults to 'photo' if media_url is provided"
+                },
             },
-            "required": ["channel", "target", "text"],
+            "required": ["channel", "target"],
         }
 
     async def execute(self, params: dict[str, Any]) -> ToolResult:
-        """Send message"""
+        """Send message or media"""
         channel_id = params.get("channel", "")
         target = params.get("target", "")
         text = params.get("text", "")
         reply_to = params.get("reply_to")
+        media_url = params.get("media_url")
+        media_type = params.get("media_type", "photo")
 
-        if not all([channel_id, target, text]):
-            return ToolResult(success=False, content="", error="channel, target, and text required")
+        # Validate required parameters
+        if not channel_id or not target:
+            return ToolResult(success=False, content="", error="channel and target are required")
+        
+        # If media_url is provided, text becomes optional (used as caption)
+        # If no media_url, text is required
+        if not media_url and not text:
+            return ToolResult(success=False, content="", error="Either text or media_url is required")
 
         try:
             channel = self.channel_registry.get(channel_id)
@@ -54,13 +68,38 @@ class MessageTool(AgentTool):
                     success=False, content="", error=f"Channel '{channel_id}' is not running"
                 )
 
-            message_id = await channel.send_text(target, text, reply_to)
+            # Send media if media_url is provided
+            if media_url:
+                # Check if channel supports media
+                if not hasattr(channel, 'send_media'):
+                    return ToolResult(
+                        success=False, 
+                        content="", 
+                        error=f"Channel '{channel_id}' does not support sending media"
+                    )
+                
+                message_id = await channel.send_media(target, media_url, media_type, caption=text)
+                
+                return ToolResult(
+                    success=True,
+                    content=f"Media ({media_type}) sent to {channel_id}:{target}",
+                    metadata={
+                        "message_id": message_id, 
+                        "channel": channel_id, 
+                        "target": target,
+                        "media_url": media_url,
+                        "media_type": media_type
+                    },
+                )
+            else:
+                # Send text message
+                message_id = await channel.send_text(target, text, reply_to)
 
-            return ToolResult(
-                success=True,
-                content=f"Message sent to {channel_id}:{target}",
-                metadata={"message_id": message_id, "channel": channel_id, "target": target},
-            )
+                return ToolResult(
+                    success=True,
+                    content=f"Message sent to {channel_id}:{target}",
+                    metadata={"message_id": message_id, "channel": channel_id, "target": target},
+                )
 
         except Exception as e:
             logger.error(f"Message tool error: {e}", exc_info=True)

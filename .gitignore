@@ -117,3 +117,16 @@ validate_*.py
 
 # Manual test scripts (keep locally, don't push)
 tests/manual/
+
+# Monitoring and maintenance scripts (keep locally)
+monitor_logs.sh
+check_service.sh
+restart_service.sh
+view_conversations.sh
+MONITORING_GUIDE.md
+SSH_SETUP_GUIDE.md
+
+# Test files
+random_image.jpg
+*.jpg
+*.png

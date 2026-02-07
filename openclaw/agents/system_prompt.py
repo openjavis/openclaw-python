@@ -158,11 +158,20 @@ def build_agent_system_prompt(
     lines.extend(build_cli_quick_reference_section())
 
     # ── 6. Skills ────────────────────────────────────────────────────
-    lines.extend(build_skills_section(
-        skills_prompt=skills_prompt,
-        is_minimal=is_minimal,
-        read_tool_name="read_file",
-    ))
+    # New API: build_skills_section now loads skills internally
+    if not is_minimal:
+        if skills_prompt:
+            # Use provided skills_prompt if available (legacy)
+            lines.append("## Skills")
+            lines.append(skills_prompt.strip())
+            lines.append("")
+        else:
+            # Load skills dynamically
+            lines.extend(build_skills_section(
+                workspace_dir=workspace_dir,
+                config=None,  # Will use default config
+                read_tool_name="read_file",
+            ))
 
     # ── 7. Memory ────────────────────────────────────────────────────
     lines.extend(build_memory_section(

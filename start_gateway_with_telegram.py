@@ -79,9 +79,10 @@ async def main():
         
         runtime = MultiProviderRuntime(
             model=model,
-            enable_search=False  # 禁用 Gemini 内置搜索，使用我们的工具
+            enable_search=False,  # 禁用 Gemini 内置搜索，使用我们的工具
+            thinking_mode="HIGH"  # gemini-3-pro-preview 需要 thinking mode 才能正常工作
         )
-        logger.info("✅ Agent Runtime 创建成功")
+        logger.info("✅ Agent Runtime 创建成功 (thinking_mode=HIGH)")
         
         # 4. 创建 Session Manager
         logger.info("📁 创建 Session Manager...")

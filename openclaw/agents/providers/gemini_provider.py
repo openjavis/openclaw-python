@@ -253,8 +253,37 @@ class GeminiProvider(LLMProvider):
             # Stream chunks
             full_text = []
             tool_calls = []
+            chunk_count = 0
             
             async for chunk in stream_response:
+                chunk_count += 1
+                
+                # DETAILED DEBUGGING: Log full chunk structure
+                logger.info(f"━━━ Gemini chunk {chunk_count} ━━━")
+                logger.info(f"  has_text: {bool(chunk.text)}")
+                logger.info(f"  text value: {repr(chunk.text) if chunk.text else 'None'}")
+                logger.info(f"  has_candidates: {hasattr(chunk, 'candidates') and bool(chunk.candidates)}")
+                
+                # Log finish_reason if available
+                if hasattr(chunk, 'candidates') and chunk.candidates:
+                    for idx, candidate in enumerate(chunk.candidates):
+                        logger.info(f"  candidate[{idx}]:")
+                        if hasattr(candidate, 'finish_reason'):
+                            finish_reason = candidate.finish_reason
+                            logger.info(f"    finish_reason: {finish_reason}")
+                        if hasattr(candidate, 'content'):
+                            logger.info(f"    has_content: {bool(candidate.content)}")
+                            if candidate.content and hasattr(candidate.content, 'parts'):
+                                logger.info(f"    parts count: {len(candidate.content.parts) if candidate.content.parts else 0}")
+                                if candidate.content.parts:
+                                    for part_idx, part in enumerate(candidate.content.parts):
+                                        logger.info(f"      part[{part_idx}]: {type(part).__name__}")
+                                        if hasattr(part, 'text'):
+                                            logger.info(f"        text: {repr(part.text)[:100]}")
+                                        if hasattr(part, 'function_call'):
+                                            logger.info(f"        function_call: {bool(part.function_call)}")
+                logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                
                 # Handle text content
                 if chunk.text:
                     full_text.append(chunk.text)
@@ -278,12 +307,16 @@ class GeminiProvider(LLMProvider):
                                         tool_calls.append(tool_call)
                                         logger.info(f"Gemini function call: {fc.name}")
 
+            logger.info(f"Gemini stream complete: {chunk_count} chunks, {len(full_text)} text parts, {len(tool_calls)} tool calls")
+
             # Send tool calls if any
             if tool_calls:
                 yield LLMResponse(type="tool_call", content=None, tool_calls=tool_calls)
 
             # Send completion
             complete_text = "".join(full_text)
+            if not complete_text and not tool_calls:
+                logger.warning(f"⚠️ Gemini returned empty response (no text and no tool calls)")
             yield LLMResponse(type="done", content=complete_text)
 
         except Exception as e:

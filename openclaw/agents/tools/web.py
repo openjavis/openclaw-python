@@ -77,63 +77,93 @@ class WebSearchTool(AgentTool):
     def __init__(self):
         super().__init__()
         self.name = "web_search"
-        self.description = "Search the web for information using DuckDuckGo"
+        # Description aligned with TypeScript version (Brave Search equivalent)
+        self.description = "Search the web for information using DuckDuckGo. Returns titles, URLs, and snippets for fast research. Use this for finding articles, websites, news, and general information on the internet."
 
     def get_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Search query"},
-                "num_results": {
+                "query": {"type": "string", "description": "Search query for finding information on the web"},
+                "count": {
                     "type": "integer",
-                    "description": "Number of results to return",
+                    "description": "Number of results to return (default: 5, max: 10)",
                     "default": 5,
+                    "minimum": 1,
+                    "maximum": 10,
                 },
             },
             "required": ["query"],
         }
 
     async def execute(self, params: dict[str, Any]) -> ToolResult:
-        """Search web using DuckDuckGo"""
+        """Search web using DuckDuckGo
+        
+        Returns results in format aligned with TypeScript version's Brave Search output:
+        - title: Page title
+        - url: Page URL
+        - description: Page snippet
+        """
         query = params.get("query", "")
-        num_results = params.get("num_results", 5)
+        # Support both 'count' (TypeScript style) and 'num_results' (legacy)
+        count = params.get("count") or params.get("num_results", 5)
+        # Enforce max of 10 like TypeScript version
+        count = min(int(count), 10)
 
         if not query:
             return ToolResult(success=False, content="", error="No query provided")
 
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
 
             # Perform search
             with DDGS() as ddgs:
-                search_results = list(ddgs.text(query, max_results=num_results))
+                search_results = list(ddgs.text(query, max_results=count))
 
-            # Format results
+            # Format results - aligned with TypeScript Brave Search format
             if search_results:
                 formatted = []
                 for i, result in enumerate(search_results, 1):
+                    title = result.get('title', 'No title')
+                    url = result.get('href', '')
+                    description = result.get('body', 'No description')
+                    
                     formatted.append(
-                        f"{i}. **{result.get('title', 'No title')}**\n"
-                        f"   URL: {result.get('href', 'No URL')}\n"
-                        f"   {result.get('body', 'No description')}\n"
+                        f"{i}. **{title}**\n"
+                        f"   URL: {url}\n"
+                        f"   {description}\n"
                     )
 
                 content = "\n".join(formatted)
                 return ToolResult(
                     success=True,
                     content=content,
-                    metadata={"count": len(search_results), "query": query},
+                    metadata={
+                        "query": query,
+                        "provider": "duckduckgo",
+                        "count": len(search_results),
+                        "results": [
+                            {
+                                "title": r.get('title', ''),
+                                "url": r.get('href', ''),
+                                "description": r.get('body', ''),
+                            }
+                            for r in search_results
+                        ],
+                    },
                 )
             else:
                 return ToolResult(
-                    success=True, content="No results found", metadata={"count": 0, "query": query}
+                    success=True,
+                    content="No results found for this query.",
+                    metadata={"query": query, "provider": "duckduckgo", "count": 0},
                 )
 
         except ImportError:
             return ToolResult(
                 success=False,
                 content="",
-                error="duckduckgo-search not installed. Install with: pip install duckduckgo-search",
+                error="ddgs not installed. Install with: pip install ddgs",
             )
         except Exception as e:
             logger.error(f"Web search error: {e}", exc_info=True)

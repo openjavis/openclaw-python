@@ -22,8 +22,6 @@ logger = logging.getLogger(__name__)
 
 class ChannelCapabilities(BaseModel):
     """Channel capabilities"""
-from __future__ import annotations
-
 
     chat_types: list[str] = ["direct", "group"]  # Supported chat types
     supports_media: bool = False
