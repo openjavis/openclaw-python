@@ -48,8 +48,20 @@ Key Points:
 - WebSocket is for EXTERNAL clients only (UI, CLI, mobile)
 
 Prerequisites:
-1. Set TELEGRAM_BOT_TOKEN environment variable
-2. Set LLM API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY)
+1. Create .env file with:
+   - TELEGRAM_BOT_TOKEN=your_telegram_token
+   - LLM_MODEL=anthropic/claude-3-5-sonnet (optional)
+   - ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY (depends on your model)
+
+
+2. Environment variables are loaded automatically from .env file
+
+3. Supported models:
+   - anthropic/claude-3-5-sonnet (requires ANTHROPIC_API_KEY)
+   - anthropic/claude-opus (requires ANTHROPIC_API_KEY)
+   - openai/gpt-4 (requires OPENAI_API_KEY)
+   - openai/gpt-4-turbo (requires OPENAI_API_KEY)
+   - google/gemini-2.5-flash (requires GOOGLE_API_KEY)
 
 Usage:
     # Start the integrated server
@@ -61,20 +73,64 @@ Usage:
 
 import asyncio
 import logging
+
 from dotenv import load_dotenv
-load_dotenv()   # Load environment variables from .env file
-#It might be not neccessary in macOS. However, in Windows it is useful.
+
+load_dotenv()  # Load environment variables from .env file
+# It might be not neccessary in macOS. However, in Windows it is useful.
 import os
 from pathlib import Path
 
 from openclaw.agents.runtime import AgentRuntime
 from openclaw.agents.session import SessionManager
+from openclaw.agents.tools.registry import get_tool_registry
 from openclaw.channels.enhanced_telegram import EnhancedTelegramChannel
 from openclaw.config import ClawdbotConfig
-from openclaw.gateway import GatewayServer, ChannelManager
+from openclaw.gateway import ChannelManager, GatewayServer
 from openclaw.monitoring import setup_logging
 
 logger = logging.getLogger(__name__)
+
+
+def get_api_key_for_model(model: str) -> tuple[str | None, str]:
+    """
+    Extract API key from environment based on model provider.
+
+    Model format: "provider/model-name"
+    Examples:
+    - "anthropic/claude-3-5-sonnet" -> ANTHROPIC_API_KEY
+    - "openai/gpt-4" -> OPENAI_API_KEY
+    - "google/gemini-2.5-flash" -> GOOGLE_API_KEY
+
+    Args:
+        model: Model name with provider prefix
+
+    Returns:
+        Tuple of (api_key, provider_name). api_key can be None if not found.
+    """
+    # Extract provider from model string
+    if "/" in model:
+        provider = model.split("/")[0].lower()
+    else:
+        provider = "anthropic"  # Default provider
+
+    # Map provider to environment variable
+    provider_env_map = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "google": "GOOGLE_API_KEY",
+        "gemini": "GOOGLE_API_KEY",
+        "aws": "AWS_ACCESS_KEY_ID",
+        "bedrock": "AWS_ACCESS_KEY_ID",
+        "vectorengine": "OPENAI_API_KEY",  # VectorEngine uses OpenAI-compatible API key
+    }
+
+    env_var = provider_env_map.get(provider)
+    if not env_var:
+        return None, provider
+
+    api_key = os.getenv(env_var)
+    return api_key, provider
 
 
 class OpenClawServer:
@@ -110,9 +166,15 @@ class OpenClawServer:
         # Session Manager
         self.session_manager = SessionManager(workspace)
 
+        # Tool Registry
+        self.tool_registry = get_tool_registry(self.session_manager)
+        self.tools = self.tool_registry.get_tools_by_profile("messaging")
+        logger.info(f"✅ Loaded {len(self.tools)} raw tool objects.")
+
         # Agent Runtime (shared by all channels)
         self.agent_runtime = AgentRuntime(
             model=config.agent.model,
+            api_key=config.agent.api_key,
             enable_context_management=True,
             max_retries=3,
         )
@@ -154,7 +216,12 @@ class OpenClawServer:
                     "bot_token": bot_token,
                     "parse_mode": "Markdown",
                 },
+                runtime=self.agent_runtime,
             )
+            env = self.channel_manager.get_runtime_env("telegram")
+            if env:
+                env.tools = self.tools
+                logger.info("🛠️ Tools attached to Telegram runtime environment")
             logger.info("✅ Telegram channel registered")
         else:
             logger.warning("⚠️ TELEGRAM_BOT_TOKEN not set, Telegram disabled")
@@ -201,7 +268,7 @@ class OpenClawServer:
         self.running = True
 
         gateway_task = asyncio.create_task(self.gateway.start(start_channels=True))
-    
+
         await asyncio.sleep(0.1)  # Allow some time for startup
 
         # [NEW] Link channels to AgentRuntime events
@@ -212,7 +279,7 @@ class OpenClawServer:
                 self.agent_runtime.add_event_listener(channel.on_event)
                 logger.info(f"🔗 [Circuit Link] Successfully linked {channel_id} to Agent events")
                 linked_count += 1
-                
+
         if linked_count == 0:
             logger.error("❌ Circuit Link Failed: No active channels found to link!")
 
@@ -244,9 +311,6 @@ class OpenClawServer:
         print("=" * 60)
         print()
 
-        # Start Gateway (this also starts all channels via ChannelManager)
-        await self.gateway.start(start_channels=True)
-
     async def stop(self) -> None:
         """Stop the OpenClaw server"""
         logger.info("⏹️ Stopping OpenClaw Server...")
@@ -273,17 +337,17 @@ async def main():
     print()
 
     # Check requirements
-    has_llm_key = any(
-        [
-            os.getenv("ANTHROPIC_API_KEY"),
-            os.getenv("OPENAI_API_KEY"),
-            os.getenv("GOOGLE_API_KEY"),
-        ]
-    )
-
-    if not has_llm_key:
-        print("❌ Error: No LLM API key found!")
-        print("   Set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY")
+    # Model is required, will try to extract API key from environment
+    llm_model = os.getenv("LLM_MODEL")
+    if not llm_model:
+        print("❌ Error: LLM_MODEL not set!")
+        print("   Add to .env file:")
+        print("   LLM_MODEL=anthropic/claude-3-5-sonnet")
+        print()
+        print("   Supported models:")
+        print("   - anthropic/claude-3-5-sonnet (requires ANTHROPIC_API_KEY)")
+        print("   - openai/gpt-4 (requires OPENAI_API_KEY)")
+        print("   - google/gemini-2.5-flash (requires GOOGLE_API_KEY)")
         return
 
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -292,15 +356,33 @@ async def main():
         print("   Gateway will start but Telegram channel will be disabled")
         print()
 
-    # Create config
+    # Intelligently extract API key based on model provider
+    api_key, provider = get_api_key_for_model(llm_model)
+
+    if not api_key:
+        print(f"❌ Error: API key not found for provider '{provider}'!")
+        print(f"   Expected environment variable: {provider.upper()}_API_KEY")
+        print("   Add to .env file:")
+        env_var = {
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "google": "GOOGLE_API_KEY",
+        }.get(provider, f"{provider.upper()}_API_KEY")
+        print(f"   {env_var}=your_api_key_here")
+        print()
+        print("   Your .env should have:")
+        print(f"   LLM_MODEL={llm_model}")
+        print(f"   {env_var}=<your_key>")
+        return
+
     config = ClawdbotConfig(
         gateway={
             "port": 8765,
             "bind": "loopback",
         },
         agent={
-            "model": "gemini/gemini-3-flash-preview",
-            "max_tokens": 4000,
+            "model": llm_model,
+            "api_key": api_key,
         },
     )
 
