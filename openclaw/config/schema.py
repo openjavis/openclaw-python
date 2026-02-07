@@ -16,6 +16,8 @@ class AgentConfig(BaseModel):
     model: str | ModelConfig = Field(default="anthropic/claude-opus-4-5-20250514")
     thinking: str | None = Field(default=None)
     verbose: bool = Field(default=False)
+    api_key: str = None
+    base_url: str = None
 
 
 class AuthConfig(BaseModel):

@@ -5,9 +5,9 @@ Allows OpenClaw to run as a system service.
 
 from __future__ import annotations
 
+from .launchd import generate_launchd_plist
 from .service import DaemonService, install_service, uninstall_service
 from .systemd import generate_systemd_unit
-from .launchd import generate_launchd_plist
 
 __all__ = [
     "DaemonService",

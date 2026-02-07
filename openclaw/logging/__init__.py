@@ -5,9 +5,9 @@ Aligned with TypeScript src/logging/subsystem.ts
 
 from __future__ import annotations
 
-from .subsystem import create_subsystem_logger, SubsystemLogger
-from .levels import LogLevel, MIN_LEVEL, MAX_LEVEL
+from .levels import MAX_LEVEL, MIN_LEVEL, LogLevel
 from .state import get_logging_state, set_logging_state
+from .subsystem import SubsystemLogger, create_subsystem_logger
 
 __all__ = [
     "create_subsystem_logger",

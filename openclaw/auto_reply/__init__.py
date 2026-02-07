@@ -6,18 +6,18 @@ matching the TypeScript OpenClaw auto-reply system.
 
 from __future__ import annotations
 
-from .types import (
-    ReplyPayload,
-    GetReplyOptions,
-    BlockReplyContext,
-    ModelSelectedContext,
-)
+from .reply import get_reply
 from .tokens import (
     HEARTBEAT_TOKEN,
     SILENT_REPLY_TOKEN,
     is_silent_reply_text,
 )
-from .reply import get_reply
+from .types import (
+    BlockReplyContext,
+    GetReplyOptions,
+    ModelSelectedContext,
+    ReplyPayload,
+)
 
 __all__ = [
     "ReplyPayload",

@@ -4,19 +4,16 @@ from __future__ import annotations
 
 
 def generate_systemd_unit(
-    service_name: str,
-    working_dir: str,
-    python_path: str,
-    user: str = "openclaw"
+    service_name: str, working_dir: str, python_path: str, user: str = "openclaw"
 ) -> str:
     """Generate systemd unit file content.
-    
+
     Args:
         service_name: Service name
         working_dir: Working directory
         python_path: Python interpreter path
         user: User to run service as
-    
+
     Returns:
         Systemd unit file content
     """

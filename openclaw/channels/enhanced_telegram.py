@@ -9,7 +9,6 @@ from typing import Any
 
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
-from openclaw.events import EventType
 
 from .base import ChannelCapabilities, ChannelPlugin, InboundMessage
 from .connection import ReconnectConfig
@@ -41,9 +40,7 @@ class EnhancedTelegramChannel(ChannelPlugin):
         self._bot_token: str | None = None
         self._polling_task: asyncio.Task | None = None
 
-        self._streaming_states = (
-            {}
-        )  # Reacord {session_id: {"msg_id": xxx, "full_content": yyy}}
+        self._streaming_states = {}  # Reacord {session_id: {"msg_id": xxx, "full_content": yyy}}
 
         # Setup connection manager with reconnection
         self._setup_connection_manager(
@@ -89,6 +86,7 @@ class EnhancedTelegramChannel(ChannelPlugin):
 
         # Add command handlers
         from telegram.ext import CommandHandler
+
         self._app.add_handler(CommandHandler("start", self._handle_start_command))
         self._app.add_handler(CommandHandler("help", self._handle_help_command))
         self._app.add_handler(CommandHandler("revoke", self._handle_revoke_command))
@@ -96,12 +94,50 @@ class EnhancedTelegramChannel(ChannelPlugin):
         self._app.add_handler(CommandHandler("status", self._handle_status_command))
 
         # Add message handler (handle both text and photos, but not commands)
+        # IMPORTANT: Also need to handle images sent as documents (common with JPEG)
         self._app.add_handler(
-            MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self._handle_telegram_message)
+            MessageHandler(
+                (filters.TEXT | filters.PHOTO | filters.Document.IMAGE) & ~filters.COMMAND,
+                self._handle_telegram_message,
+            )
         )
 
         # Add error handler
         self._app.add_error_handler(self._handle_error)
+
+        # Add debug handler to log all updates for diagnostics
+        async def log_all_updates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            """Debug handler to log all updates"""
+            logger.info(f"[{self.id}] 📥 Incoming update - type: {type(update).__name__}")
+            if update.message:
+                logger.info(f"[{self.id}]   Message ID: {update.message.message_id}")
+                logger.info(f"[{self.id}]   From: {update.effective_user.id}")
+                logger.info(f"[{self.id}]   Chat: {update.effective_chat.id}")
+                logger.info(f"[{self.id}]   Text: {bool(update.message.text)}")
+                logger.info(f"[{self.id}]   Photo: {bool(update.message.photo)}")
+                logger.info(f"[{self.id}]   Caption: {bool(update.message.caption)}")
+                # Check all possible media fields
+                logger.info(f"[{self.id}]   Document: {bool(update.message.document)}")
+                logger.info(f"[{self.id}]   Video: {bool(update.message.video)}")
+                logger.info(f"[{self.id}]   Audio: {bool(update.message.audio)}")
+                logger.info(f"[{self.id}]   Voice: {bool(update.message.voice)}")
+                logger.info(f"[{self.id}]   Video_note: {bool(update.message.video_note)}")
+                logger.info(f"[{self.id}]   Animation: {bool(update.message.animation)}")
+
+                # Check message content_type
+                if hasattr(update.message, "content_type"):
+                    logger.info(f"[{self.id}]   Content Type: {update.message.content_type}")
+
+                # Raw message data
+                logger.info(f"[{self.id}]   Raw message dict: {update.message.to_dict()}")
+
+                if update.message.photo:
+                    logger.info(f"[{self.id}]   Photo count: {len(update.message.photo)}")
+
+        # Register the debug handler as a low-priority post-init handler
+        from telegram.ext import filters as tg_filters
+
+        self._app.add_handler(MessageHandler(tg_filters.ALL, log_all_updates), group=-10)
 
         # Start bot
         await self._app.initialize()
@@ -249,18 +285,56 @@ class EnhancedTelegramChannel(ChannelPlugin):
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Handle incoming Telegram message"""
+        logger.info(f"[{self.id}] _handle_telegram_message triggered")
+
         if not update.message:
+            logger.warning(f"[{self.id}] No message in update")
             return
 
         message = update.message
         chat = message.chat
         sender = message.from_user
 
-        # Skip messages without text or photo
-        if not message.text and not message.photo:
+        logger.info(
+            f"[{self.id}] Message received - text={bool(message.text)}, photo={bool(message.photo)}, caption={bool(message.caption)}, doc={bool(message.document)}"
+        )
+        logger.info(
+            f"[{self.id}] Message details: text='{message.text}', photo={message.photo}, caption='{message.caption}'"
+        )
+
+        # Check for image document (JPEG sent as document)
+        is_image_document = False
+        if message.document and message.document.mime_type:
+            is_image_mime = message.document.mime_type.startswith("image/")
+            is_image_filename = (
+                message.document.file_name
+                and message.document.file_name.lower().endswith(
+                    (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+                )
+            )
+            is_image_document = is_image_mime or is_image_filename
+
+            if is_image_document:
+                logger.info(
+                    f"[{self.id}] ✅ Detected image document: {message.document.file_name} ({message.document.mime_type})"
+                )
+
+        # Skip messages without text, photo, or image document
+        if not message.text and not message.photo and not is_image_document:
+            logger.info(
+                f"[{self.id}] ⚠️  Skipping message: no text, no photo, and no image document"
+            )
+            logger.info(
+                f"[{self.id}]    (But has document? {bool(message.document)}, video? {bool(message.video)})"
+            )
             return
 
+        logger.info(
+            f"[{self.id}] Processing message: has_text={bool(message.text)}, has_photo={bool(message.photo)}, has_image_doc={is_image_document}"
+        )
+
         self._last_chat_id = str(chat.id)  # Record the last chat ID for streaming
+        session_id = f"{self.id}-{chat.id}"  # Bulid session ID based on channel and chat ID for session management
 
         # Determine chat type
         chat_type = "direct"
@@ -271,25 +345,81 @@ class EnhancedTelegramChannel(ChannelPlugin):
 
         # Handle text or caption
         text = message.text or message.caption or ""
-        
+
         # If there's a photo, download it and add to metadata
         photo_url = None
+        images = []
+
+        # Handle regular photos
         if message.photo:
+            logger.info(f"[{self.id}] Photo detected: {len(message.photo)} photo size(s)")
             # Get the largest photo
             photo = message.photo[-1]
+            logger.info(
+                f"[{self.id}] Selected largest photo: file_id={photo.file_id}, width={photo.width}, height={photo.height}"
+            )
+
             try:
                 # Get file info and download URL
+                logger.info(f"[{self.id}] Getting file info for photo...")
                 file = await context.bot.get_file(photo.file_id)
-                photo_url = file.file_path
+                logger.info(f"[{self.id}] Got file info: file_path={file.file_path}")
+
+                if file.file_path.startswith("http"):
+                    photo_url = file.file_path
+                else:
+                    # Only construct URL if file_path is provided and doesn't already look like a URL
+                    photo_url = (
+                        f"https://api.telegram.org/file/bot{self._bot_token}/{file.file_path}"
+                    )
+
+                images.append(photo_url)
+                logger.info(f"[{self.id}] ✅ Received photo: {photo_url}")
+
                 # Add photo context to text
                 if not text:
                     text = "[User sent a photo]"
                 else:
                     text = f"[User sent a photo with caption: {text}]"
-                logger.info(f"[{self.id}] Received photo: {photo_url}")
+
             except Exception as e:
-                logger.error(f"[{self.id}] Failed to get photo: {e}")
+                logger.error(f"[{self.id}] ❌ Failed to get photo: {e}", exc_info=True)
                 text = "[User sent a photo, but failed to retrieve it]"
+
+        # Handle image documents (JPEG sent as document)
+        elif is_image_document:
+            logger.info(f"[{self.id}] Image document detected: {message.document.file_name}")
+
+            try:
+                # Get file info for the document
+                logger.info(f"[{self.id}] Getting file info for image document...")
+                file = await context.bot.get_file(message.document.file_id)
+                logger.info(f"[{self.id}] Got file info: file_path={file.file_path}")
+
+                if file.file_path.startswith("http"):
+                    photo_url = file.file_path
+                else:
+                    # Only construct URL if file_path is provided and doesn't already look like a URL
+                    photo_url = (
+                        f"https://api.telegram.org/file/bot{self._bot_token}/{file.file_path}"
+                    )
+
+                images.append(photo_url)
+                logger.info(f"[{self.id}] ✅ Received image document: {photo_url}")
+
+                # Add photo context to text
+                if not text:
+                    text = f"[User sent an image: {message.document.file_name}]"
+                else:
+                    text = (
+                        f"[User sent an image ({message.document.file_name}) with caption: {text}]"
+                    )
+
+            except Exception as e:
+                logger.error(f"[{self.id}] ❌ Failed to get image document: {e}", exc_info=True)
+                text = "[User sent an image, but failed to retrieve it]"
+        else:
+            logger.info(f"[{self.id}] No photo or image document in this message")
 
         # Create normalized message
         inbound = InboundMessage(
@@ -307,32 +437,34 @@ class EnhancedTelegramChannel(ChannelPlugin):
                 "chat_title": chat.title,
                 "chat_username": chat.username,
                 "is_bot": sender.is_bot,
+                "images": images,  # Add images list to metadata
                 "photo_url": photo_url,
                 "has_photo": message.photo is not None,
             },
         )
 
+        logger.info(
+            f"[{self.id}] InboundMessage created: text_len={len(text)}, images={len(images)}, metadata.images={len(inbound.metadata.get('images', []))}"
+        )
+
         # Pass to handler (with metrics tracking)
+        logger.info(f"[{self.id}] Passing message to handler...")
         await self._handle_message(inbound)
+        logger.info(f"[{self.id}] Message handler completed")
 
     # [NEW] Deal with streaming text updates
     async def on_event(self, event: Any) -> None:
-        # Debug log
-        print(f"📱 [Telegram Channel Received] Type: {event.type}")
-        
         # ensure the text delta event
-        if event.type != EventType.AGENT_TEXT:
-            if event.type == EventType.AGENT_TURN_COMPLETE:
-                # Clean up streaming state
+        if str(event.type).lower() != "eventtype.agent_text":
+            if str(event.type).lower() == "eventtype.agent_turn_complete":
+                # done with this session, clean up state
                 self._streaming_states.pop(event.session_id, None)
             return
 
         text = event.data.get("delta", {}).get("text", "")
         session_id = event.session_id
 
-        chat_id = self._last_chat_id if hasattr(self, "_last_chat_id") else session_id.replace("telegram-", "")
-
-        if not text or not chat_id:
+        if not text or not hasattr(self, "_last_chat_id"):
             return
 
         # Check if we have an existing message to edit
@@ -374,7 +506,9 @@ class EnhancedTelegramChannel(ChannelPlugin):
     # Command Handlers
     # =========================================================================
 
-    async def _handle_start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _handle_start_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """Handle /start command"""
         welcome_message = """
 👋 **Welcome to OpenClaw AI Assistant!**
@@ -405,7 +539,9 @@ Examples:
         await update.message.reply_text(welcome_message, parse_mode="Markdown")
         logger.info(f"[{self.id}] User {update.effective_user.id} started bot")
 
-    async def _handle_help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _handle_help_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """Handle /help command"""
         help_message = """
 📚 **OpenClaw AI Assistant - Help Documentation**
@@ -451,14 +587,16 @@ Feel free to ask me anything! 😊
         await update.message.reply_text(help_message, parse_mode="Markdown")
         logger.info(f"[{self.id}] User {update.effective_user.id} requested help")
 
-    async def _handle_status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _handle_status_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """Handle /status command"""
         from datetime import datetime
-        
+
         # Get session info
         chat_id = str(update.effective_chat.id)
         session_id = f"{self.id}-{chat_id}"
-        
+
         status_message = f"""
 📊 **System Status**
 
@@ -486,14 +624,16 @@ Everything is running smoothly! 🚀
         await update.message.reply_text(status_message, parse_mode="Markdown")
         logger.info(f"[{self.id}] User {update.effective_user.id} checked status")
 
-    async def _handle_reset_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _handle_reset_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """Handle /reset command"""
         chat_id = str(update.effective_chat.id)
         session_id = f"{self.id}-{chat_id}"
-        
+
         # Try to delete session if session manager is available
         try:
-            if hasattr(self, '_session_manager') and self._session_manager:
+            if hasattr(self, "_session_manager") and self._session_manager:
                 self._session_manager.delete_session(session_id)
                 message = "✅ **Conversation Reset**\n\nYour conversation history has been cleared, we can start fresh!"
             else:
@@ -501,21 +641,23 @@ Everything is running smoothly! 🚀
         except Exception as e:
             logger.error(f"[{self.id}] Failed to reset session: {e}")
             message = "⚠️ **Reset Failed**\n\nUnable to clear session data, but you can still continue the conversation."
-        
+
         await update.message.reply_text(message, parse_mode="Markdown")
         logger.info(f"[{self.id}] User {update.effective_user.id} reset conversation")
 
-    async def _handle_revoke_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _handle_revoke_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """Handle /revoke command"""
         chat_id = str(update.effective_chat.id)
         session_id = f"{self.id}-{chat_id}"
-        
+
         # Delete session data
         try:
-            if hasattr(self, '_session_manager') and self._session_manager:
+            if hasattr(self, "_session_manager") and self._session_manager:
                 self._session_manager.delete_session(session_id)
                 logger.info(f"[{self.id}] User {update.effective_user.id} revoked data")
-                
+
                 message = """
 🗑️ **Data Cleared**
 
@@ -533,11 +675,10 @@ To restart, send /start
 """
             else:
                 message = "✅ Data clearance request has been recorded."
-                
+
             await update.message.reply_text(message, parse_mode="Markdown")
         except Exception as e:
             logger.error(f"[{self.id}] Failed to revoke data: {e}")
             await update.message.reply_text(
-                "⚠️ Data clearance failed, please try again later.",
-                parse_mode="Markdown"
+                "⚠️ Data clearance failed, please try again later.", parse_mode="Markdown"
             )

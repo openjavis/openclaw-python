@@ -5,9 +5,9 @@ Aligned with TypeScript src/media-understanding/
 
 from __future__ import annotations
 
-from .types import MediaUnderstandingResult, MediaScope
-from .runner import run_media_understanding
 from .apply import apply_media_understanding
+from .runner import run_media_understanding
+from .types import MediaScope, MediaUnderstandingResult
 
 __all__ = [
     "MediaUnderstandingResult",

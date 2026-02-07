@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Literal
 from enum import Enum
+from typing import Literal
 
 
 class MediaScope(str, Enum):
     """Scope for media understanding."""
-    
+
     AUTO = "auto"  # Automatic based on config
     ALL = "all"  # Process all media
     IMAGES = "images"  # Only images
@@ -21,11 +21,11 @@ class MediaScope(str, Enum):
 @dataclass
 class MediaUnderstandingResult:
     """Result of media understanding."""
-    
+
     media_type: Literal["image", "audio", "video"]
     url: str
-    description: Optional[str] = None
-    transcript: Optional[str] = None
-    error: Optional[str] = None
-    provider: Optional[str] = None
-    model: Optional[str] = None
+    description: str | None = None
+    transcript: str | None = None
+    error: str | None = None
+    provider: str | None = None
+    model: str | None = None

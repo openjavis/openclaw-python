@@ -9,6 +9,7 @@ Matches TypeScript src/agents/tool-policy.ts:
   - normalize / expand / resolve helpers
   - Owner-only tool guard
 """
+
 from __future__ import annotations
 
 import logging
@@ -139,6 +140,7 @@ TOOL_PROFILES: dict[ToolProfileId, ToolProfilePolicy] = {
 # Normalisation helpers
 # ──────────────────────────────────────────────────────────────────────
 
+
 def normalize_tool_name(name: str) -> str:
     """Normalize and resolve tool name alias (matches TS normalizeToolName)."""
     normalized = name.strip().lower()
@@ -176,6 +178,7 @@ def expand_tool_groups(names: list[str] | None) -> list[str]:
 # Owner-only guard
 # ──────────────────────────────────────────────────────────────────────
 
+
 def is_owner_only_tool_name(name: str) -> bool:
     """Check if a tool requires owner access (matches TS isOwnerOnlyToolName)."""
     return normalize_tool_name(name) in OWNER_ONLY_TOOL_NAMES
@@ -208,6 +211,7 @@ def apply_owner_only_tool_policy(
 # Profile resolution
 # ──────────────────────────────────────────────────────────────────────
 
+
 def resolve_tool_profile_policy(
     profile: str | None,
 ) -> ToolProfilePolicy | None:
@@ -229,8 +233,10 @@ def resolve_tool_profile_policy(
 # Sandbox mode
 # ──────────────────────────────────────────────────────────────────────
 
+
 class SandboxMode(Enum):
     """Sandbox modes for tool execution."""
+
     OFF = "off"
     NON_MAIN = "non-main"
     ALL = "all"
@@ -239,6 +245,7 @@ class SandboxMode(Enum):
 # ──────────────────────────────────────────────────────────────────────
 # ToolPolicy: allow / deny evaluation
 # ──────────────────────────────────────────────────────────────────────
+
 
 class ToolPolicy:
     """
@@ -278,6 +285,7 @@ class ToolPolicy:
 # ──────────────────────────────────────────────────────────────────────
 # ToolPolicyResolver: config-driven evaluation
 # ──────────────────────────────────────────────────────────────────────
+
 
 class ToolPolicyResolver:
     """Resolves and enforces tool policies from config."""
@@ -366,11 +374,7 @@ class ToolPolicyResolver:
     def _get_sandbox_mode(self) -> SandboxMode:
         """Get configured sandbox mode."""
         mode_str = (
-            self.config
-            .get("agents", {})
-            .get("defaults", {})
-            .get("sandbox", {})
-            .get("mode", "off")
+            self.config.get("agents", {}).get("defaults", {}).get("sandbox", {}).get("mode", "off")
         )
         try:
             return SandboxMode(mode_str)
@@ -405,6 +409,7 @@ class ToolPolicyResolver:
 # ──────────────────────────────────────────────────────────────────────
 # Predefined tool profiles (legacy compat + new TS-aligned profiles)
 # ──────────────────────────────────────────────────────────────────────
+
 
 def get_profile_policy(profile_name: str) -> ToolPolicy | None:
     """

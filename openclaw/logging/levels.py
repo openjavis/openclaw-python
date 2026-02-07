@@ -7,7 +7,7 @@ from enum import IntEnum
 
 class LogLevel(IntEnum):
     """Log levels aligned with TypeScript."""
-    
+
     TRACE = 0
     DEBUG = 1
     INFO = 2
@@ -24,15 +24,15 @@ MAX_LEVEL = LogLevel.FATAL
 
 def level_from_string(level: str) -> LogLevel:
     """Convert string to LogLevel.
-    
+
     Args:
         level: Level string (case-insensitive)
-    
+
     Returns:
         LogLevel enum value
     """
     level_upper = level.upper()
-    
+
     if level_upper == "TRACE":
         return LogLevel.TRACE
     elif level_upper == "DEBUG":
@@ -53,15 +53,15 @@ def level_from_string(level: str) -> LogLevel:
 
 def should_log(current_level: LogLevel, min_level: LogLevel) -> bool:
     """Check if message at current level should be logged.
-    
+
     Args:
         current_level: Level of the message
         min_level: Minimum level to log
-    
+
     Returns:
         True if message should be logged
     """
     if min_level == LogLevel.SILENT:
         return False
-    
+
     return current_level >= min_level

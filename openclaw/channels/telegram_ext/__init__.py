@@ -5,10 +5,10 @@ Extends basic Telegram with webhook, reactions, buttons, etc.
 
 from __future__ import annotations
 
-from .webhook import TelegramWebhookHandler
+from .inline_buttons import InlineButton, create_inline_keyboard
+from .media_upload import MediaUploadResult, upload_media
 from .reactions import add_reaction, remove_reaction
-from .inline_buttons import create_inline_keyboard, InlineButton
-from .media_upload import upload_media, MediaUploadResult
+from .webhook import TelegramWebhookHandler
 
 __all__ = [
     "TelegramWebhookHandler",

@@ -167,28 +167,29 @@ class RuntimeEnv:
 
         # Build or use system prompt
         system_prompt = self.custom_prompt or self.system_message
-        
+
         # If no custom prompt, build a proper one using the new architecture
         if not system_prompt:
             try:
                 from .agents.system_prompt import build_agent_system_prompt
-                from .agents.system_prompt_bootstrap import load_bootstrap_files, format_bootstrap_context
+                from .agents.system_prompt_bootstrap import (
+                    format_bootstrap_context,
+                    load_bootstrap_files,
+                )
                 from .agents.system_prompt_params import get_runtime_info
-                
+
                 # Build runtime info
                 runtime_info = get_runtime_info(
-                    agent_id=self.env_id,
-                    model=self.model,
-                    channel=None
+                    agent_id=self.env_id, model=self.model, channel=None
                 )
-                
+
                 # Load bootstrap files
                 bootstrap_files = load_bootstrap_files(self.workspace)
                 context_files = format_bootstrap_context(bootstrap_files)
-                
+
                 # Get tool names
                 tool_names = [tool.name for tool in (tools or [])]
-                
+
                 # Build system prompt
                 system_prompt = build_agent_system_prompt(
                     workspace_dir=self.workspace,
@@ -197,7 +198,7 @@ class RuntimeEnv:
                     runtime_info=runtime_info,
                     context_files=context_files,
                 )
-                
+
                 logger.debug(f"Built system prompt for {session_id} ({len(system_prompt)} chars)")
             except Exception as e:
                 logger.warning(f"Failed to build system prompt: {e}")

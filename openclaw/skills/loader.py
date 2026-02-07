@@ -1,10 +1,8 @@
 """Skills loader"""
 
 import logging
-import os
 import re
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -17,7 +15,7 @@ logger = logging.getLogger(__name__)
 class SkillLoader:
     """Loads skills from various sources"""
 
-    def __init__(self, config: Optional[dict] = None):
+    def __init__(self, config: dict | None = None):
         self.skills: dict[str, Skill] = {}
         self.config = config or {}
         self.eligibility_checker = SkillEligibilityChecker(self.config)

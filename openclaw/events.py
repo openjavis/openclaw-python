@@ -29,6 +29,8 @@ Usage:
 from __future__ import annotations
 
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from collections import defaultdict
@@ -154,7 +156,7 @@ class Event:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Event":
+    def from_dict(cls, data: dict[str, Any]) -> Event:
         """Create event from dictionary"""
         return cls(
             type=EventType(data["type"]),

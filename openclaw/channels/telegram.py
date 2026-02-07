@@ -29,9 +29,9 @@ class TelegramChannel(ChannelPlugin):
         )
         self._app: Application | None = None
         self._bot_token: str | None = None
-        self._command_parser: Optional[ChatCommandParser] = None
-        self._command_executor: Optional[ChatCommandExecutor] = None
-        self._owner_id: Optional[str] = None
+        self._command_parser: ChatCommandParser | None = None
+        self._command_executor: ChatCommandExecutor | None = None
+        self._owner_id: str | None = None
 
     async def start(self, config: dict[str, Any]) -> None:
         """Start Telegram bot"""
@@ -54,9 +54,7 @@ class TelegramChannel(ChannelPlugin):
         self._app = Application.builder().token(self._bot_token).build()
 
         # Add message handler (now handles both commands and regular messages)
-        self._app.add_handler(
-            MessageHandler(filters.TEXT, self._handle_telegram_message)
-        )
+        self._app.add_handler(MessageHandler(filters.TEXT, self._handle_telegram_message))
 
         # Start bot
         await self._app.initialize()
@@ -155,9 +153,7 @@ class TelegramChannel(ChannelPlugin):
                         command, session_id, user_id, is_owner
                     )
                     await self._app.bot.send_message(
-                        chat_id=chat.id,
-                        text=response,
-                        reply_to_message_id=message.message_id
+                        chat_id=chat.id, text=response, reply_to_message_id=message.message_id
                     )
                     return
                 except Exception as e:
@@ -165,7 +161,7 @@ class TelegramChannel(ChannelPlugin):
                     await self._app.bot.send_message(
                         chat_id=chat.id,
                         text=f"❌ Error: {str(e)}",
-                        reply_to_message_id=message.message_id
+                        reply_to_message_id=message.message_id,
                     )
                     return
 

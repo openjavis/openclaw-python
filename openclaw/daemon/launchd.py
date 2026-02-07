@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 
-def generate_launchd_plist(
-    service_name: str,
-    working_dir: str,
-    python_path: str
-) -> str:
+def generate_launchd_plist(service_name: str, working_dir: str, python_path: str) -> str:
     """Generate launchd plist file content.
-    
+
     Args:
         service_name: Service name
         working_dir: Working directory
         python_path: Python interpreter path
-    
+
     Returns:
         Launchd plist content
     """
