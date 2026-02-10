@@ -2,10 +2,13 @@
 import hashlib
 import logging
 import sqlite3
+import struct
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 from .types import MemorySearchResult, MemorySource
+from .embeddings import EmbeddingProvider, OpenAIEmbeddingProvider
+from .hybrid import merge_hybrid_results, normalize_scores, SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +20,18 @@ class BuiltinMemoryManager:
         self,
         agent_id: str,
         workspace_dir: Path,
-        embedding_provider: Optional[str] = None
+        embedding_provider: Optional[str | EmbeddingProvider] = None
     ):
         self.agent_id = agent_id
         self.workspace_dir = workspace_dir
-        self.embedding_provider = embedding_provider or "openai"
+        
+        # Initialize embedding provider
+        if isinstance(embedding_provider, EmbeddingProvider):
+            self.embedder = embedding_provider
+        elif embedding_provider == "openai" or embedding_provider is None:
+            self.embedder = OpenAIEmbeddingProvider()
+        else:
+            self.embedder = OpenAIEmbeddingProvider()  # Default
         
         # Set up database path
         memory_dir = workspace_dir / ".openclaw" / "memory"
@@ -101,7 +111,9 @@ class BuiltinMemoryManager:
         query: str,
         limit: int = 5,
         sources: Optional[list[MemorySource]] = None,
-        use_vector: bool = False
+        use_vector: bool = False,
+        use_hybrid: bool = True,
+        vector_weight: float = 0.7,
     ) -> list[MemorySearchResult]:
         """
         Search memory using full-text search (and optionally vector search).
@@ -111,6 +123,8 @@ class BuiltinMemoryManager:
             limit: Maximum number of results
             sources: Filter by memory sources
             use_vector: Use vector search (requires embeddings)
+            use_hybrid: Use hybrid search (combines vector + FTS)
+            vector_weight: Weight for vector scores in hybrid search
             
         Returns:
             List of search results
@@ -118,8 +132,17 @@ class BuiltinMemoryManager:
         if not self.db:
             return []
         
-        # For now, implement FTS only (vector search requires embedding generation)
-        return await self._fts_search(query, limit, sources)
+        # If vector enabled and hybrid
+        if use_vector and use_hybrid:
+            return await self._hybrid_search(query, limit, sources, vector_weight)
+        
+        # If only vector
+        elif use_vector:
+            return await self._vector_search(query, limit, sources)
+        
+        # Otherwise FTS only
+        else:
+            return await self._fts_search(query, limit, sources)
     
     async def _fts_search(
         self,
@@ -331,3 +354,191 @@ class BuiltinMemoryManager:
         if self.db:
             self.db.close()
             self.db = None
+
+    async def _vector_search(
+        self,
+        query: str,
+        limit: int,
+        sources: Optional[list[MemorySource]]
+    ) -> list[MemorySearchResult]:
+        """
+        Vector similarity search
+        
+        Args:
+            query: Search query
+            limit: Maximum results
+            sources: Optional source filter
+            
+        Returns:
+            Search results
+        """
+        try:
+            # Generate query embedding
+            query_embedding = await self.embedder.embed_text(query)
+            
+            # Build source filter
+            source_filter = ""
+            source_values = []
+            if sources:
+                source_names = [s.value for s in sources]
+                placeholders = ','.join('?' * len(source_names))
+                source_filter = f"AND chunks.source IN ({placeholders})"
+                source_values = source_names
+            
+            # Vector similarity search
+            # Note: This requires sqlite-vec extension for efficient vector search
+            # For now, we'll do a simple approach (fetch all and compute in Python)
+            sql = f"""
+                SELECT 
+                    chunks.id,
+                    chunks.path,
+                    chunks.source,
+                    chunks.text,
+                    chunks.start_line,
+                    chunks.end_line,
+                    chunks.embedding
+                FROM chunks
+                WHERE chunks.embedding IS NOT NULL
+                {source_filter}
+            """
+            
+            cursor = self.db.execute(sql, source_values)
+            
+            # Compute cosine similarity
+            results = []
+            for row in cursor.fetchall():
+                # Deserialize embedding (stored as blob)
+                embedding_blob = row['embedding']
+                if not embedding_blob:
+                    continue
+                
+                # Convert blob to list of floats
+                chunk_embedding = self._deserialize_embedding(embedding_blob)
+                
+                # Compute cosine similarity
+                similarity = self._cosine_similarity(query_embedding, chunk_embedding)
+                
+                # Create snippet
+                snippet = row['text'][:200] + ('...' if len(row['text']) > 200 else '')
+                
+                results.append(MemorySearchResult(
+                    id=row['id'],
+                    path=row['path'],
+                    source=MemorySource(row['source']),
+                    text=row['text'],
+                    snippet=snippet,
+                    start_line=row['start_line'],
+                    end_line=row['end_line'],
+                    score=similarity
+                ))
+            
+            # Sort by similarity (descending)
+            results.sort(key=lambda r: r.score, reverse=True)
+            
+            # Return top N
+            return results[:limit]
+            
+        except Exception as e:
+            logger.error(f"Vector search error: {e}", exc_info=True)
+            return []
+    
+    async def _hybrid_search(
+        self,
+        query: str,
+        limit: int,
+        sources: Optional[list[MemorySource]],
+        vector_weight: float = 0.7,
+    ) -> list[MemorySearchResult]:
+        """
+        Hybrid search combining vector and FTS
+        
+        Args:
+            query: Search query
+            limit: Maximum results
+            sources: Optional source filter
+            vector_weight: Weight for vector scores
+            
+        Returns:
+            Merged search results
+        """
+        # Get vector results
+        vector_results = await self._vector_search(query, limit * 2, sources)
+        
+        # Get FTS results
+        fts_results = await self._fts_search(query, limit * 2, sources)
+        
+        # Convert to SearchResult format
+        vector_sr = [
+            SearchResult(
+                id=r.id,
+                text=r.text,
+                path=r.path,
+                source=r.source.value,
+                score=r.score,
+                start_line=r.start_line,
+                end_line=r.end_line,
+            )
+            for r in vector_results
+        ]
+        
+        fts_sr = [
+            SearchResult(
+                id=r.id,
+                text=r.text,
+                path=r.path,
+                source=r.source.value,
+                score=r.score,
+                start_line=r.start_line,
+                end_line=r.end_line,
+            )
+            for r in fts_results
+        ]
+        
+        # Normalize scores
+        vector_sr = normalize_scores(vector_sr)
+        fts_sr = normalize_scores(fts_sr)
+        
+        # Merge
+        text_weight = 1.0 - vector_weight
+        merged = merge_hybrid_results(vector_sr, fts_sr, vector_weight, text_weight)
+        
+        # Convert back to MemorySearchResult
+        results = []
+        for sr in merged[:limit]:
+            snippet = sr.text[:200] + ('...' if len(sr.text) > 200 else '')
+            
+            results.append(MemorySearchResult(
+                id=sr.id,
+                path=sr.path,
+                source=MemorySource(sr.source),
+                text=sr.text,
+                snippet=snippet,
+                start_line=sr.start_line,
+                end_line=sr.end_line,
+                score=sr.score
+            ))
+        
+        return results
+    
+    def _serialize_embedding(self, embedding: List[float]) -> bytes:
+        """Serialize embedding to bytes"""
+        return struct.pack(f'{len(embedding)}f', *embedding)
+    
+    def _deserialize_embedding(self, blob: bytes) -> List[float]:
+        """Deserialize embedding from bytes"""
+        num_floats = len(blob) // 4
+        return list(struct.unpack(f'{num_floats}f', blob))
+    
+    def _cosine_similarity(self, a: List[float], b: List[float]) -> float:
+        """Compute cosine similarity between two vectors"""
+        if len(a) != len(b):
+            return 0.0
+        
+        dot_product = sum(x * y for x, y in zip(a, b))
+        magnitude_a = sum(x * x for x in a) ** 0.5
+        magnitude_b = sum(x * x for x in b) ** 0.5
+        
+        if magnitude_a == 0 or magnitude_b == 0:
+            return 0.0
+        
+        return dot_product / (magnitude_a * magnitude_b)

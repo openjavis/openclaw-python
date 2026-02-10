@@ -64,11 +64,26 @@ class GatewayConnection:
         self.protocol_version = 1
 
     async def send_response(
-        self, request_id: str, payload: Any = None, error: ErrorShape | None = None
+        self, request_id: str | int, payload: Any = None, error: ErrorShape | None = None
     ) -> None:
-        """Send response frame"""
-        response = ResponseFrame(id=request_id, ok=error is None, payload=payload, error=error)
-        await self.websocket.send(response.model_dump_json())
+        """Send response frame (supports JSON-RPC 2.0 format)"""
+        # Send JSON-RPC 2.0 format
+        if error:
+            response = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32603 if error.code == "INTERNAL_ERROR" else -32601,
+                    "message": error.message,
+                },
+            }
+        else:
+            response = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": payload,
+            }
+        await self.websocket.send(json.dumps(response))
 
     async def send_event(self, event: str, payload: Any = None) -> None:
         """Send event frame"""
@@ -79,13 +94,23 @@ class GatewayConnection:
         """Handle incoming message"""
         try:
             data = json.loads(message)
-            frame_type = data.get("type")
-
-            if frame_type == "req":
+            
+            # Support both custom frame format and standard JSON-RPC 2.0
+            if "jsonrpc" in data:
+                # Standard JSON-RPC 2.0 format
+                request = RequestFrame(
+                    type="req",
+                    id=data.get("id"),
+                    method=data.get("method"),
+                    params=data.get("params", {}),
+                )
+                await self.handle_request(request)
+            elif data.get("type") == "req":
+                # Custom frame format
                 request = RequestFrame(**data)
                 await self.handle_request(request)
             else:
-                logger.warning(f"Unknown frame type: {frame_type}")
+                logger.warning(f"Unknown message format: {data}")
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON: {e}")
@@ -222,6 +247,8 @@ class GatewayServer:
         self.session_manager = session_manager
         self.tools = tools or []
         self.system_prompt = system_prompt
+        self.http_server = None
+        self.http_server_task = None
 
         # Create ChannelManager
         self.channel_manager = ChannelManager(
@@ -238,6 +265,10 @@ class GatewayServer:
 
         # Listen for channel events to broadcast
         self.channel_manager.add_event_listener(self._on_channel_event)
+
+        # Initialize wizard RPC handler
+        from .wizard_rpc import WizardRPCHandler
+        self.wizard_handler = WizardRPCHandler(self)
 
         # Auto-discover channel plugins if requested
         if auto_discover_channels:
@@ -330,6 +361,10 @@ class GatewayServer:
         logger.info(f"Starting Gateway server on {host}:{port}")
         self.running = True
 
+        # Start HTTP server for control UI if enabled
+        if getattr(self.config.gateway, 'enable_web_ui', True):
+            await self._start_http_server()
+
         # Start all enabled channels
         if start_channels:
             channel_results = await self.channel_manager.start_all()
@@ -345,10 +380,55 @@ class GatewayServer:
             while self.running:
                 await asyncio.sleep(1)
 
+    async def _start_http_server(self) -> None:
+        """Start HTTP server for control UI"""
+        try:
+            import uvicorn
+            from .http_server import ControlUIServer
+            
+            ui_port = getattr(self.config.gateway, 'web_ui_port', 8080)
+            base_path = getattr(self.config.gateway, 'web_ui_base_path', '/')
+            
+            logger.info(f"Starting HTTP server for control UI on port {ui_port}")
+            
+            self.http_server = ControlUIServer(
+                gateway=self,
+                base_path=base_path,
+                ui_port=ui_port
+            )
+            
+            config = uvicorn.Config(
+                self.http_server.app,
+                host="127.0.0.1",
+                port=ui_port,
+                log_level="error",  # Reduce noise
+                access_log=False
+            )
+            
+            server = uvicorn.Server(config)
+            self.http_server_task = asyncio.create_task(server.serve())
+            
+            logger.info(f"✅ Control UI available at http://127.0.0.1:{ui_port}")
+        
+        except ImportError as e:
+            logger.warning(f"Could not start HTTP server (missing dependency): {e}")
+        except Exception as e:
+            logger.error(f"Failed to start HTTP server: {e}", exc_info=True)
+    
     async def stop(self) -> None:
         """Stop the Gateway server"""
         logger.info("Stopping Gateway server")
         self.running = False
+
+        # Stop HTTP server if running
+        if self.http_server_task:
+            try:
+                self.http_server_task.cancel()
+                await self.http_server_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.error(f"Error stopping HTTP server: {e}")
 
         # Stop all channels first
         await self.channel_manager.stop_all()

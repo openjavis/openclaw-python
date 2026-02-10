@@ -1,5 +1,35 @@
 """Infrastructure modules"""
 
-from .tailscale import TailscaleAuthProvider, read_tailscale_whois_identity
-
-__all__ = ["TailscaleAuthProvider", "read_tailscale_whois_identity"]
+from .heartbeat_events import (
+    HeartbeatEvent,
+    HeartbeatEventType,
+    IndicatorType,
+    emit_heartbeat_event,
+    on_heartbeat_event,
+    get_last_heartbeat_event,
+    resolve_indicator_type,
+)
+from .heartbeat_runner import (
+    start_heartbeat_runner,
+    run_heartbeat_once,
+    is_heartbeat_enabled_for_agent,
+    resolve_heartbeat_interval_ms,
+    resolve_heartbeat_prompt,
+    set_heartbeats_enabled,
+)
+from .diagnostic_events import (
+    DiagnosticStats,
+    DiagnosticFlag,
+    log_webhook_received,
+    log_webhook_processed,
+    log_webhook_error,
+    log_message_queued,
+    log_message_processed,
+    log_session_state_change,
+    log_session_stuck,
+    log_run_attempt,
+    log_active_runs,
+    get_diagnostic_stats,
+    start_diagnostic_heartbeat,
+    stop_diagnostic_heartbeat,
+)

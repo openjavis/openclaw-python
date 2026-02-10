@@ -60,6 +60,7 @@ class EventType(str, Enum):
     AGENT_THINKING = "agent.thinking"
     AGENT_TOOL_USE = "agent.tool_use"
     AGENT_TOOL_RESULT = "agent.tool_result"
+    AGENT_FILE_GENERATED = "agent.file_generated"
     AGENT_TURN_COMPLETE = "agent.turn_complete"
     AGENT_ERROR = "agent.error"
     AGENT_STOPPED = "agent.stopped"

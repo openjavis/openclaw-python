@@ -3,6 +3,8 @@ Task prompt loader
 
 Loads task-specific prompts from .pi/prompts/ directory.
 These are workflow templates for specific tasks like PR review, changelog auditing, etc.
+
+Enhanced with prompt template variable expansion support.
 """
 
 from __future__ import annotations
@@ -13,6 +15,14 @@ from pathlib import Path
 from typing import NamedTuple
 
 import yaml
+
+from .prompt_templates import (
+    expand_prompt_template,
+    load_prompt_templates,
+    parse_command_args,
+    PromptTemplate,
+    find_template_by_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,3 +159,61 @@ def format_task_prompt_summary(prompts: list[TaskPrompt]) -> str:
         lines.append(f"- {prompt.name}: {desc}")
     
     return "\n".join(lines)
+
+
+def load_all_prompt_templates(
+    workspace_dir: Path,
+    agent_dir: Path | None = None,
+) -> list[PromptTemplate]:
+    """
+    Load all prompt templates from multiple sources
+    
+    Args:
+        workspace_dir: Workspace directory
+        agent_dir: Agent directory (for global templates)
+        
+    Returns:
+        List of all prompt templates
+    """
+    return load_prompt_templates(
+        workspace_dir=workspace_dir,
+        agent_dir=agent_dir,
+    )
+
+
+def expand_task_prompt_with_args(
+    template: PromptTemplate,
+    args_string: str
+) -> str:
+    """
+    Expand a task prompt template with arguments
+    
+    Args:
+        template: Prompt template
+        args_string: Space-separated arguments (supports quotes)
+        
+    Returns:
+        Expanded prompt content
+    """
+    args = parse_command_args(args_string)
+    return expand_prompt_template(template, args)
+
+
+def get_task_prompt_by_name(
+    workspace_dir: Path,
+    name: str,
+    agent_dir: Path | None = None,
+) -> PromptTemplate | None:
+    """
+    Get a task prompt by name
+    
+    Args:
+        workspace_dir: Workspace directory
+        name: Template name
+        agent_dir: Agent directory
+        
+    Returns:
+        Prompt template or None
+    """
+    templates = load_all_prompt_templates(workspace_dir, agent_dir)
+    return find_template_by_name(templates, name)

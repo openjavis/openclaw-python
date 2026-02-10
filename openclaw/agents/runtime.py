@@ -74,7 +74,7 @@ class MultiProviderRuntime:
 
     def __init__(
         self,
-        model: str = "anthropic/claude-opus-4-5-20250514",
+        model: str = "google/gemini-3-pro-preview",
         api_key: str | None = None,
         base_url: str | None = None,
         max_retries: int = 3,
@@ -370,11 +370,43 @@ class MultiProviderRuntime:
                     current_model = self.fallback_manager.get_current_model()
                     logger.info(f"Using model: {current_model}")
 
+                # Smart image loading: Only load images explicitly referenced in prompts
+                # Based on openclaw TypeScript: src/agents/pi-embedded-runner/run/images.ts
+                from openclaw.agents.image_loader import smart_load_images
+                
+                # Apply smart image loading if images are provided
+                images_to_use = None
+                if images:
+                    # Convert session messages to dict format for image loader
+                    history_messages = [
+                        {"role": msg.role, "content": msg.content, "images": msg.images}
+                        for msg in session.messages
+                    ] if session else []
+                    
+                    image_data = smart_load_images(
+                        current_prompt=prompt,
+                        history_messages=history_messages,
+                        existing_images=images
+                    )
+                    images_to_use = image_data["current_images"]
+                    
+                    if image_data["loaded_count"] > 0 or image_data["skipped_count"] > 0:
+                        logger.info(
+                            f"Smart image loading: {image_data['loaded_count']} loaded, "
+                            f"{image_data['skipped_count']} skipped"
+                        )
+                
                 # Convert session messages to LLM format
+                # CRITICAL: Only attach images to the LAST message (current turn)
                 llm_messages = []
-                for msg in session.get_messages():
-                    # Include images if present
-                    msg_images = getattr(msg, 'images', None)
+                for i, msg in enumerate(session.get_messages()):
+                    msg_images = None
+                    
+                    # ONLY attach images to the LAST message (current turn)
+                    if i == len(session.messages) - 1 and images_to_use:
+                        msg_images = images_to_use
+                    
+                    # Historical messages: no images
                     llm_messages.append(LLMMessage(role=msg.role, content=msg.content, images=msg_images))
 
                 # Format tools for provider
@@ -490,6 +522,41 @@ class MultiProviderRuntime:
                                     )
                                     await self._notify_observers(event)
                                     yield event
+
+                                    # Check if tool generated a file (e.g., PPT, PDF, image)
+                                    # Try to parse output as JSON if it looks like file info
+                                    file_info = None
+                                    if success and isinstance(output, str):
+                                        try:
+                                            import json
+                                            parsed = json.loads(output)
+                                            if isinstance(parsed, dict) and "file_path" in parsed:
+                                                file_info = parsed
+                                        except (json.JSONDecodeError, ValueError):
+                                            pass
+                                    elif success and isinstance(output, dict) and "file_path" in output:
+                                        file_info = output
+                                    
+                                    if file_info:
+                                        from pathlib import Path
+                                        file_path = file_info["file_path"]
+                                        
+                                        if Path(file_path).exists():
+                                            # Emit file generated event
+                                            file_event = Event(
+                                                type=EventType.AGENT_FILE_GENERATED,
+                                                source="agent-runtime",
+                                                session_id=session.session_id if session else None,
+                                                data={
+                                                    "file_path": file_path,
+                                                    "file_type": file_info.get("file_type", "document"),
+                                                    "file_name": Path(file_path).name,
+                                                    "caption": file_info.get("caption", Path(file_path).stem),
+                                                },
+                                            )
+                                            await self._notify_observers(file_event)
+                                            yield file_event
+                                            logger.info(f"📎 File generated and event emitted: {Path(file_path).name}")
 
                                     # Add tool result to session
                                     session.add_tool_message(

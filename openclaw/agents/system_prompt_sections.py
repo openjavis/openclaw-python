@@ -509,6 +509,117 @@ def build_heartbeats_section(
     ]
 
 
+def build_exec_capabilities_section(
+    exec_config: dict | None = None
+) -> list[str]:
+    """Build the Exec Capabilities section to inform agent about bash capabilities."""
+    if not exec_config:
+        return []
+    
+    security = exec_config.get("security", "deny")
+    safe_bins = exec_config.get("safe_bins", [])
+    timeout_sec = exec_config.get("timeout_sec", 120)
+    
+    parts = [
+        "## Bash Execution Capabilities",
+    ]
+    
+    if security == "full":
+        parts.extend([
+            "✅ **You CAN execute bash commands freely** (security mode: full)",
+            "- You can run `pip install <package>` to install Python packages",
+            "- You can run Python scripts with `python scripts/script.py`",
+            "- You can use system commands (git, npm, node, etc.)",
+            f"- Command timeout: {timeout_sec} seconds",
+            "",
+            "**━━━ CRITICAL: NO SANDBOX RESTRICTIONS ━━━**",
+            "**YOU ARE NOT IN A SANDBOX. YOU HAVE FULL SYSTEM ACCESS.**",
+            "- All system commands and tools are available",
+            "- python-pptx IS INSTALLED (version 1.0.2)",
+            "- You CAN run Python scripts",
+            "- You CAN install packages (though not needed)",
+            "- There are NO restrictions on bash commands",
+            "",
+            "**YOU CAN AND MUST GENERATE POWERPOINT FILES**",
+            "- The generate_ppt.py script EXISTS at: skills/powerpoint/scripts/generate_ppt.py",
+            "- python-pptx library IS AVAILABLE",
+            "- You MUST use the 'bash' tool to call generate_ppt.py script",
+            "- DO NOT use write_file to create .pptx files - it won't work",
+            "- DO NOT say you cannot generate files - YOU CAN",
+            "- ALWAYS use bash tool for PPT generation",
+            "- ALWAYS use relative paths with --output (e.g., presentations/MyFile.pptx)",
+            "- ALWAYS include --workspace parameter with session workspace path",
+            "",
+            "**PowerPoint Generation Workflow (FOLLOW THIS):**",
+            "",
+            "1. User asks for PPT → Use BashTool to generate it",
+            "",
+            "2. Create JSON config (save to /tmp/ppt_config.json):",
+            "```json",
+            "{",
+            "  \"title\": \"Presentation Title\",",
+            "  \"slides\": [",
+            "    {\"layout\": \"title\", \"title\": \"Main Title\", \"subtitle\": \"Subtitle\"},",
+            "    {\"layout\": \"content\", \"title\": \"Slide 1\", \"content\": {\"bullets\": [\"Point 1\", \"Point 2\"]}},",
+            "    {\"layout\": \"content\", \"title\": \"Slide 2\", \"content\": {\"bullets\": [\"Point A\", \"Point B\"]}}",
+            "  ]",
+            "}",
+            "```",
+            "",
+            "3. Generate output path:",
+            "   - Format: ~/.openclaw/workspace/session-{id}/presentations/{Title}_{YYYYMMDD_HHMMSS}.pptx",
+            "   - Example: ~/.openclaw/workspace/session-123/presentations/AI_Intro_20260208_143022.pptx",
+            "",
+            "4. CRITICAL: Use bash tool to run generation command (NOT write_file):",
+            "   Tool: bash",
+            "   Command:",
+            "```bash",
+            "mkdir -p ~/.openclaw/workspace/session-{id}/presentations && \\",
+            "cat > /tmp/ppt_config.json << 'EOF'",
+            "{...json config...}",
+            "EOF",
+            "python skills/powerpoint/scripts/generate_ppt.py \\",
+            "  --config /tmp/ppt_config.json \\",
+            "  --output ~/.openclaw/workspace/session-{id}/presentations/Title_20260208_143022.pptx",
+            "```",
+            "",
+            "5. Script returns JSON: {\"file_path\": \"...\", \"file_type\": \"document\", \"caption\": \"...\"}",
+            "   → System automatically sends file to user via Telegram",
+            "",
+            "**Example Full Command:**",
+            "```bash",
+            "cat > /tmp/ppt_config.json << 'EOF'",
+            "{\"title\": \"AI Introduction\", \"slides\": [{\"layout\": \"title\", \"title\": \"AI\", \"subtitle\": \"Overview\"}]}",
+            "EOF",
+            "python skills/powerpoint/scripts/generate_ppt.py \\",
+            "  --config /tmp/ppt_config.json \\",
+            "  --output presentations/AI_20260208.pptx \\",
+            "  --workspace ~/.openclaw/workspace/session-123",
+            "```",
+            "",
+            "**Remember:** Use relative paths for --output and include --workspace!",
+        ])
+    elif security == "allowlist":
+        safe_bins_str = ", ".join(safe_bins[:10])
+        if len(safe_bins) > 10:
+            safe_bins_str += f", ... (+{len(safe_bins) - 10} more)"
+        parts.extend([
+            "⚠️  **Bash execution is restricted** (security mode: allowlist)",
+            f"- Only these binaries are allowed: {safe_bins_str}",
+            f"- Command timeout: {timeout_sec} seconds",
+            "- For other commands, ask the user for approval or suggest manual execution",
+        ])
+    else:  # deny
+        parts.extend([
+            "❌ **Bash execution is disabled** (security mode: deny)",
+            "- You cannot execute bash commands directly",
+            "- Suggest manual execution or use other available tools",
+        ])
+    
+    parts.append("")
+    return parts
+
+
 def build_sandbox_section(
     sandbox_info: dict | None = None
 ) -> list[str]:

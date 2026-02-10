@@ -115,8 +115,29 @@ class VoiceCallTool(AgentTool):
         if not call_id:
             return ToolResult(success=False, content="", error="call_id required")
 
-        # TODO: Implement call hangup
-        return ToolResult(success=False, content="", error="Hangup not implemented")
+        try:
+            import os
+            from twilio.rest import Client
+            
+            account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+            auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+            
+            if not account_sid or not auth_token:
+                return ToolResult(success=False, content="", error="Twilio credentials not set")
+            
+            client = Client(account_sid, auth_token)
+            call = client.calls(call_id).update(status="completed")
+            
+            return ToolResult(
+                success=True,
+                content=f"Call {call_id} ended",
+                metadata={"call_sid": call.sid, "status": call.status},
+            )
+        except ImportError:
+            return ToolResult(success=False, content="", error="twilio not installed")
+        except Exception as e:
+            logger.error(f"Hangup error: {e}", exc_info=True)
+            return ToolResult(success=False, content="", error=str(e))
 
     async def _call_status(self, params: dict[str, Any]) -> ToolResult:
         """Get call status"""
@@ -125,13 +146,70 @@ class VoiceCallTool(AgentTool):
         if not call_id:
             return ToolResult(success=False, content="", error="call_id required")
 
-        # TODO: Implement call status check
-        return ToolResult(success=False, content="", error="Call status not implemented")
+        try:
+            import os
+            from twilio.rest import Client
+            
+            account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+            auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+            
+            if not account_sid or not auth_token:
+                return ToolResult(success=False, content="", error="Twilio credentials not set")
+            
+            client = Client(account_sid, auth_token)
+            call = client.calls(call_id).fetch()
+            
+            return ToolResult(
+                success=True,
+                content=f"Call status: {call.status}",
+                metadata={
+                    "call_sid": call.sid,
+                    "status": call.status,
+                    "duration": call.duration,
+                    "from": call.from_,
+                    "to": call.to,
+                },
+            )
+        except ImportError:
+            return ToolResult(success=False, content="", error="twilio not installed")
+        except Exception as e:
+            logger.error(f"Status error: {e}", exc_info=True)
+            return ToolResult(success=False, content="", error=str(e))
 
     async def _list_calls(self, params: dict[str, Any]) -> ToolResult:
         """List recent calls"""
-        # TODO: Implement call list
-        return ToolResult(success=True, content="No recent calls", metadata={"count": 0})
+        try:
+            import os
+            from twilio.rest import Client
+            
+            account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+            auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+            
+            if not account_sid or not auth_token:
+                return ToolResult(success=False, content="", error="Twilio credentials not set")
+            
+            client = Client(account_sid, auth_token)
+            limit = params.get("limit", 20)
+            calls = client.calls.list(limit=limit)
+            
+            call_list = [{
+                "sid": c.sid,
+                "from": c.from_,
+                "to": c.to,
+                "status": c.status,
+                "duration": c.duration,
+            } for c in calls]
+            
+            return ToolResult(
+                success=True,
+                content=f"Found {len(call_list)} calls",
+                metadata={"calls": call_list},
+            )
+        except ImportError:
+            return ToolResult(success=False, content="", error="twilio not installed")
+        except Exception as e:
+            logger.error(f"List calls error: {e}", exc_info=True)
+            return ToolResult(success=False, content="", error=str(e))
 
 
 # Note: Full voice call implementation requires:

@@ -1,12 +1,24 @@
-"""Browser automation tool using Playwright"""
+"""Browser automation tool using Playwright
+
+DEPRECATED: This module is deprecated in favor of openclaw.browser.tools.UnifiedBrowserTool
+Please use: from openclaw.browser import UnifiedBrowserTool
+"""
 
 import asyncio
 import logging
+import warnings
 from typing import Any
 
 from .base import AgentTool, ToolResult
 
 logger = logging.getLogger(__name__)
+
+warnings.warn(
+    "openclaw.agents.tools.browser is deprecated. "
+    "Use openclaw.browser.tools.UnifiedBrowserTool instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 
 class BrowserTool(AgentTool):

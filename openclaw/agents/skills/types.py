@@ -18,10 +18,12 @@ class Skill:
         name: Skill name
         description: Skill description
         location: Path to SKILL.md file
+        source: Source identifier (bundled, managed, workspace)
     """
     name: str
     description: str
     location: str
+    source: str = "unknown"
 
 
 @dataclass

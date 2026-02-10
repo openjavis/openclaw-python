@@ -20,6 +20,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from ..agents.runtime import AgentRuntime
@@ -637,16 +638,29 @@ class ChannelManager:
                 if self.session_manager:
                     session = self.session_manager.get_session(session_id)
                     logger.info(f"[{channel_id}] Session created/retrieved: {session_id}")
+                    
+                    # Resolve session workspace for file generation
+                    from openclaw.agents.session_workspace import resolve_session_workspace_dir
+                    session_workspace = resolve_session_workspace_dir(
+                        workspace_root=session.workspace_dir if session else Path.home() / ".openclaw" / "workspace",
+                        session_key=session_id
+                    )
+                    logger.info(f"[{channel_id}] Session workspace: {session_workspace}")
 
                 # Process through Agent Runtime
                 response_text = ""
                 logger.info(f"[{channel_id}] Starting runtime.run_turn with {len(self.tools)} tools")
 
-                # Extract photo URL from metadata if present
+                # Extract image/media URL from metadata if present
                 images = None
-                if message.metadata and message.metadata.get("photo_url"):
-                    images = [message.metadata["photo_url"]]
-                    logger.info(f"[{channel_id}] Including photo in request: {images[0][:80]}...")
+                # Check for photo_url (legacy) or file_url (new)
+                image_url = None
+                if message.metadata:
+                    image_url = message.metadata.get("file_url") or message.metadata.get("photo_url")
+                
+                if image_url:
+                    images = [image_url]
+                    logger.info(f"[{channel_id}] Including image in request: {image_url[:80]}...")
 
                 async for event in runtime.run_turn(
                     session, 
@@ -665,6 +679,26 @@ class ChannelManager:
                             delta_text = event.data.get("delta", {}).get("text", "")
                             response_text += delta_text
                             logger.debug(f"[{channel_id}] Text delta: {delta_text[:50]}...")
+                        elif event_type_value == "agent.file_generated":
+                            # Handle file generated event - send file to user
+                            file_path = event.data.get("file_path")
+                            file_type = event.data.get("file_type", "document")
+                            caption = event.data.get("caption", "")
+                            
+                            if file_path and Path(file_path).exists():
+                                logger.info(f"[{channel_id}] Sending generated file: {file_path}")
+                                try:
+                                    await channel.send_media(
+                                        target=message.chat_id,
+                                        media_url=file_path,
+                                        media_type=file_type,
+                                        caption=caption
+                                    )
+                                    logger.info(f"📎 [{channel_id}] Sent file to {message.chat_id}: {Path(file_path).name}")
+                                except Exception as e:
+                                    logger.error(f"Failed to send file: {e}", exc_info=True)
+                            else:
+                                logger.warning(f"[{channel_id}] File not found or path missing: {file_path}")
                         elif event_type_value == "agent.turn_complete" or event_type_value == "turn_complete":
                             logger.info(f"[{channel_id}] Turn complete")
                             break

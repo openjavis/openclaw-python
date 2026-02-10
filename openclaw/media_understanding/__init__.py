@@ -1,17 +1,21 @@
-"""Media Understanding - Automatic audio/video/image analysis.
+"""Media Understanding system
 
-Aligned with TypeScript src/media-understanding/
+Analyzes images, audio, and video using various AI providers.
+Matches TypeScript openclaw/src/media-understanding/
 """
 
-from __future__ import annotations
-
-from .types import MediaUnderstandingResult, MediaScope
-from .runner import run_media_understanding
-from .apply import apply_media_understanding
+from .runner import MediaUnderstandingRunner, analyze_media
+from .image import ImageAnalyzer
+from .audio import AudioAnalyzer
+from .video import VideoAnalyzer
+from .types import MediaType, AnalysisResult
 
 __all__ = [
-    "MediaUnderstandingResult",
-    "MediaScope",
-    "run_media_understanding",
-    "apply_media_understanding",
+    "MediaUnderstandingRunner",
+    "analyze_media",
+    "ImageAnalyzer",
+    "AudioAnalyzer",
+    "VideoAnalyzer",
+    "MediaType",
+    "AnalysisResult",
 ]

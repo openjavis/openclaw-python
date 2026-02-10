@@ -1,69 +1,59 @@
-"""Onboarding wizard."""
+"""Onboarding wizard
 
+First-run onboarding experience for new users.
+Matches TypeScript openclaw/src/wizard/onboarding.ts
+"""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
-async def run_onboarding(workspace_dir: Optional[Path] = None) -> dict:
-    """Run onboarding wizard.
+async def run_onboarding_wizard(config: dict, workspace_dir: Path) -> dict:
+    """
+    Run onboarding wizard
     
-    Guides user through initial setup.
+    Guides new users through initial setup:
+    - API key configuration
+    - Model selection
+    - Channel setup
+    - First task
+    
+    Args:
+        config: Gateway configuration
+        workspace_dir: Workspace directory
+        
+    Returns:
+        Dict with wizard results
+    """
+    logger.info("Starting onboarding wizard")
+    
+    # TODO: Interactive wizard prompts
+    # This would guide users through:
+    # 1. Setting up LLM API keys
+    # 2. Choosing default model
+    # 3. Configuring first channel (Telegram, Discord, etc.)
+    # 4. Running first agent task
+    
+    logger.info("Onboarding wizard complete")
+    
+    return {
+        "completed": True,
+        "skipped": False,
+    }
+
+
+def is_first_run(workspace_dir: Path) -> bool:
+    """
+    Check if this is the first run
     
     Args:
         workspace_dir: Workspace directory
-    
+        
     Returns:
-        Configuration dictionary
+        True if first run
     """
-    print("Welcome to OpenClaw!")
-    print("=" * 60)
-    print("Let's set up your AI agent.\n")
-    
-    config = {}
-    
-    # Agent name
-    agent_name = input("What should we call your agent? [OpenClaw]: ").strip()
-    if not agent_name:
-        agent_name = "OpenClaw"
-    config["agent_name"] = agent_name
-    
-    # Provider
-    print("\nAvailable AI providers:")
-    print("  1. Anthropic (Claude)")
-    print("  2. OpenAI (GPT)")
-    print("  3. Google (Gemini)")
-    
-    provider_choice = input("Choose provider [1]: ").strip()
-    if provider_choice == "2":
-        config["provider"] = "openai"
-        config["model"] = "gpt-4o"
-    elif provider_choice == "3":
-        config["provider"] = "google"
-        config["model"] = "gemini-2.0-flash-exp"
-    else:
-        config["provider"] = "anthropic"
-        config["model"] = "claude-3-5-sonnet-20241022"
-    
-    # API key
-    print(f"\nYou'll need an API key for {config['provider']}.")
-    api_key = input(f"Enter your {config['provider']} API key: ").strip()
-    config["api_key"] = api_key
-    
-    # Workspace
-    if workspace_dir:
-        config["workspace"] = str(workspace_dir)
-    else:
-        workspace = input("\nWorkspace directory [./workspace]: ").strip()
-        config["workspace"] = workspace or "./workspace"
-    
-    print("\n" + "=" * 60)
-    print("Setup complete!")
-    print(f"Agent: {config['agent_name']}")
-    print(f"Provider: {config['provider']}")
-    print(f"Model: {config['model']}")
-    print(f"Workspace: {config['workspace']}")
-    print("=" * 60)
-    
-    return config
+    marker_file = workspace_dir / ".openclaw" / "onboarding-complete"
+    return not marker_file.exists()

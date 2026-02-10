@@ -21,6 +21,50 @@ class AgentConfig(BaseModel):
     max_tokens: int = Field(default=4096, gt=0, description="Maximum tokens per response")
 
 
+class ExecConfig(BaseModel):
+    """Exec tool configuration (matches TypeScript ExecToolConfig)"""
+
+    host: str = Field(default="gateway", description="Exec host routing (sandbox|gateway|node)")
+    security: str = Field(default="full", description="Security mode (deny|allowlist|full)")
+    ask: str = Field(default="off", description="Approval mode (off|on-miss|always)")
+    safe_bins: list[str] = Field(
+        default_factory=lambda: ["jq", "grep", "cut", "sort", "uniq", "head", "tail", "tr", "wc", "python", "python3", "pip", "pip3", "git", "node", "npm"],
+        description="Safe binaries that can run without allowlist entries"
+    )
+    path_prepend: list[str] = Field(
+        default_factory=list, description="Directories to prepend to PATH"
+    )
+    timeout_sec: int = Field(default=120, gt=0, description="Default timeout in seconds")
+    background_ms: int = Field(default=10000, gt=0, description="Time before auto-backgrounding")
+
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, v: str) -> str:
+        """Validate exec host"""
+        valid_hosts = ["sandbox", "gateway", "node"]
+        if v not in valid_hosts:
+            raise ValueError(f"Exec host must be one of {valid_hosts}")
+        return v
+
+    @field_validator("security")
+    @classmethod
+    def validate_security(cls, v: str) -> str:
+        """Validate security mode"""
+        valid_modes = ["deny", "allowlist", "full"]
+        if v not in valid_modes:
+            raise ValueError(f"Security mode must be one of {valid_modes}")
+        return v
+
+    @field_validator("ask")
+    @classmethod
+    def validate_ask(cls, v: str) -> str:
+        """Validate ask mode"""
+        valid_modes = ["off", "on-miss", "always"]
+        if v not in valid_modes:
+            raise ValueError(f"Ask mode must be one of {valid_modes}")
+        return v
+
+
 class ToolsConfig(BaseModel):
     """Tools configuration"""
 
@@ -30,6 +74,7 @@ class ToolsConfig(BaseModel):
         default=None, ge=1, description="Rate limit for tools"
     )
     sandbox_enabled: bool = Field(default=False, description="Enable sandbox execution")
+    exec: ExecConfig = Field(default_factory=ExecConfig, description="Exec tool configuration")
 
 
 class ChannelConfig(BaseModel):

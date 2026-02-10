@@ -32,6 +32,21 @@ class DaemonService:
             return self._is_launchd_installed()
         return False
     
+    def is_running(self) -> bool:
+        """Check if service is running.
+        
+        Returns:
+            True if running
+        """
+        if not self.is_installed():
+            return False
+        
+        if self.platform == "Linux":
+            return self._is_systemd_running()
+        elif self.platform == "Darwin":
+            return self._is_launchd_running()
+        return False
+    
     def _is_systemd_installed(self) -> bool:
         """Check if systemd service is installed."""
         service_file = Path(f"/etc/systemd/system/{self.service_name}.service")
@@ -41,6 +56,32 @@ class DaemonService:
         """Check if launchd service is installed."""
         plist_file = Path(f"~/Library/LaunchAgents/com.openclaw.{self.service_name}.plist").expanduser()
         return plist_file.exists()
+    
+    def _is_systemd_running(self) -> bool:
+        """Check if systemd service is running."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", self.service_name],
+                capture_output=True,
+                text=True
+            )
+            return result.stdout.strip() == "active"
+        except Exception:
+            return False
+    
+    def _is_launchd_running(self) -> bool:
+        """Check if launchd service is running."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["launchctl", "list"],
+                capture_output=True,
+                text=True
+            )
+            return f"com.openclaw.{self.service_name}" in result.stdout
+        except Exception:
+            return False
 
 
 def install_service(
@@ -153,3 +194,15 @@ def _uninstall_launchd(service_name: str) -> bool:
     print(f"  launchctl unload {plist_file}")
     print(f"  rm {plist_file}")
     return True
+
+
+def get_service_manager(service_name: str = "openclaw") -> DaemonService:
+    """Get service manager instance.
+    
+    Args:
+        service_name: Service name
+        
+    Returns:
+        DaemonService instance
+    """
+    return DaemonService(service_name)

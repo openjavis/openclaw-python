@@ -271,6 +271,15 @@ class GeminiProvider(LLMProvider):
                         if hasattr(candidate, 'finish_reason'):
                             finish_reason = candidate.finish_reason
                             logger.info(f"    finish_reason: {finish_reason}")
+                        
+                        # Check for safety ratings (content filtering)
+                        if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
+                            logger.info(f"    safety_ratings: {candidate.safety_ratings}")
+                        
+                        # Check for block reason
+                        if hasattr(chunk, 'prompt_feedback'):
+                            logger.info(f"  prompt_feedback: {chunk.prompt_feedback}")
+                        
                         if hasattr(candidate, 'content'):
                             logger.info(f"    has_content: {bool(candidate.content)}")
                             if candidate.content and hasattr(candidate.content, 'parts'):
@@ -317,6 +326,11 @@ class GeminiProvider(LLMProvider):
             complete_text = "".join(full_text)
             if not complete_text and not tool_calls:
                 logger.warning(f"⚠️ Gemini returned empty response (no text and no tool calls)")
+                logger.warning(f"Possible reasons:")
+                logger.warning(f"  1. Content may have triggered safety filters")
+                logger.warning(f"  2. Too many images ({len([m for m in messages if m.images])} messages with images)")
+                logger.warning(f"  3. Context length exceeded")
+                logger.warning(f"Suggestion: Try with fewer images (max 10) or simpler prompt")
             yield LLMResponse(type="done", content=complete_text)
 
         except Exception as e:

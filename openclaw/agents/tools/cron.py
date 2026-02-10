@@ -12,12 +12,22 @@ logger = logging.getLogger(__name__)
 class CronTool(AgentTool):
     """Scheduled task management using APScheduler"""
 
-    def __init__(self):
+    def __init__(self, channel_registry=None, session_manager=None):
         super().__init__()
         self.name = "cron"
-        self.description = "Manage scheduled tasks and reminders"
+        self.description = (
+            "Schedule and manage timed tasks, reminders, and alarms - YOU CAN DO THIS! "
+            "Use this tool to set alarms, reminders, and recurring tasks. "
+            "When the scheduled time arrives, I will send a notification message to the user. "
+            "Examples: 'wake me up at 7am', 'daily morning news at 9am', 'stock market update every evening'. "
+            "I HAVE the ability to schedule these tasks and send notifications! "
+            "Supports natural language schedules like 'daily at 9am' or cron format '0 9 * * *'. "
+            "Actions: add (create new job), list (show all jobs), remove (delete job), status (check job info)."
+        )
         self._scheduler = None
         self._jobs: dict[str, Any] = {}
+        self._channel_registry = channel_registry
+        self._session_manager = session_manager
 
     def _init_scheduler(self):
         """Initialize scheduler"""
@@ -196,10 +206,35 @@ class CronTool(AgentTool):
         if job_id in self._jobs:
             self._jobs[job_id]["runs"] += 1
             self._jobs[job_id]["last_run"] = datetime.now(UTC).isoformat()
+            
+            # Store the notification message for the job
+            job_info = self._jobs[job_id]
+            notification_text = message or task or f"Scheduled task '{job_id}' triggered"
 
-        # TODO: Integrate with session manager to send notifications
-        # For now, just log
-        logger.info(f"Job '{job_id}' notification: {message}")
+        # Send notification through channels if available
+        if self._channel_registry:
+            try:
+                # Try to send through all active channels
+                for channel_id in ["telegram", "discord", "slack"]:
+                    channel = self._channel_registry.get(channel_id)
+                    if channel and channel.is_running():
+                        # Get the session to find the target chat/user
+                        if self._session_manager and session_id != "main":
+                            session = self._session_manager.get_session(session_id)
+                            if session and hasattr(session, 'platform_data'):
+                                target = session.platform_data.get('chat_id') or session.platform_data.get('user_id')
+                                if target:
+                                    await channel.send_text(
+                                        str(target),
+                                        f"⏰ **Reminder**\n\n{notification_text}"
+                                    )
+                                    logger.info(f"Sent cron notification to {channel_id}:{target}")
+                                    return
+            except Exception as e:
+                logger.error(f"Failed to send cron notification: {e}", exc_info=True)
+        
+        # Fallback: just log
+        logger.info(f"Job '{job_id}' notification: {notification_text}")
 
     async def _list_jobs(self, params: dict[str, Any]) -> ToolResult:
         """List all jobs"""

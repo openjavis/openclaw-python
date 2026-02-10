@@ -1,122 +1,165 @@
-"""Media understanding runner.
-
-Automatically processes media and generates descriptions/transcripts.
-"""
-
+"""Main media understanding runner"""
 from __future__ import annotations
 
-from typing import Optional
-import asyncio
+import logging
+import mimetypes
+from pathlib import Path
+from typing import Any
 
-from .types import MediaUnderstandingResult, MediaScope
+from .types import MediaType, AnalysisResult, Provider
+from .image import ImageAnalyzer
+from .audio import AudioAnalyzer
+from .video import VideoAnalyzer
+
+logger = logging.getLogger(__name__)
 
 
-async def run_media_understanding(
-    media_url: str,
-    media_type: str,
-    scope: MediaScope = MediaScope.AUTO,
-    config: Optional[dict] = None
-) -> Optional[MediaUnderstandingResult]:
-    """Run media understanding on a single media item.
-    
-    Args:
-        media_url: URL or path to media
-        media_type: Type of media (image, audio, video)
-        scope: Processing scope
-        config: Optional configuration
-    
-    Returns:
-        MediaUnderstandingResult if processed, None if skipped
+class MediaUnderstandingRunner:
     """
-    config = config or {}
+    Main coordinator for media analysis
     
-    # Check if media understanding is enabled
-    if scope == MediaScope.NONE:
-        return None
+    Auto-detects media type and routes to appropriate analyzer.
+    """
     
-    # Check scope
-    if scope == MediaScope.IMAGES and media_type != "image":
-        return None
-    if scope == MediaScope.AUDIO and media_type != "audio":
-        return None
-    if scope == MediaScope.VIDEO and media_type != "video":
-        return None
-    
-    try:
-        # Process based on media type
-        if media_type == "image":
-            return await _process_image(media_url, config)
-        elif media_type == "audio":
-            return await _process_audio(media_url, config)
-        elif media_type == "video":
-            return await _process_video(media_url, config)
+    def __init__(self, config: dict[str, Any] | None = None):
+        """
+        Initialize media understanding runner
         
-        return None
+        Args:
+            config: Optional configuration for providers
+        """
+        self.config = config or {}
+        
+        # Initialize analyzers
+        self.image_analyzer = ImageAnalyzer(config)
+        self.audio_analyzer = AudioAnalyzer(config)
+        self.video_analyzer = VideoAnalyzer(config)
     
-    except Exception as e:
-        return MediaUnderstandingResult(
-            media_type=media_type,
-            url=media_url,
-            error=str(e)
-        )
+    def detect_media_type(self, path: Path | str) -> MediaType:
+        """
+        Detect media type from file path
+        
+        Args:
+            path: File path or URL
+            
+        Returns:
+            Detected media type
+        """
+        path_str = str(path)
+        
+        # Get MIME type
+        mime_type, _ = mimetypes.guess_type(path_str)
+        
+        if mime_type:
+            if mime_type.startswith("image/"):
+                return MediaType.IMAGE
+            elif mime_type.startswith("audio/"):
+                return MediaType.AUDIO
+            elif mime_type.startswith("video/"):
+                return MediaType.VIDEO
+        
+        # Fallback to extension
+        ext = Path(path_str).suffix.lower()
+        
+        image_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}
+        audio_exts = {".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac"}
+        video_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv"}
+        
+        if ext in image_exts:
+            return MediaType.IMAGE
+        elif ext in audio_exts:
+            return MediaType.AUDIO
+        elif ext in video_exts:
+            return MediaType.VIDEO
+        
+        return MediaType.UNKNOWN
+    
+    async def analyze(
+        self,
+        path: Path | str,
+        media_type: MediaType | None = None,
+        provider: Provider | None = None,
+        prompt: str | None = None,
+        **kwargs
+    ) -> AnalysisResult:
+        """
+        Analyze media
+        
+        Args:
+            path: File path or URL
+            media_type: Optional media type (auto-detected if None)
+            provider: Optional provider (auto-selected if None)
+            prompt: Optional prompt for analysis
+            **kwargs: Additional provider-specific options
+            
+        Returns:
+            Analysis result
+        """
+        import time
+        
+        start_time = time.time()
+        
+        # Detect media type if not provided
+        if media_type is None:
+            media_type = self.detect_media_type(path)
+        
+        logger.info(f"Analyzing {media_type.value}: {path}")
+        
+        try:
+            # Route to appropriate analyzer
+            if media_type == MediaType.IMAGE:
+                result = await self.image_analyzer.analyze(
+                    path, provider, prompt, **kwargs
+                )
+            elif media_type == MediaType.AUDIO:
+                result = await self.audio_analyzer.analyze(
+                    path, provider, **kwargs
+                )
+            elif media_type == MediaType.VIDEO:
+                result = await self.video_analyzer.analyze(
+                    path, provider, prompt, **kwargs
+                )
+            else:
+                result = AnalysisResult(
+                    media_type=media_type,
+                    provider=Provider.ANTHROPIC,  # Placeholder
+                    success=False,
+                    error=f"Unsupported media type: {media_type}",
+                )
+            
+            # Add duration
+            result.duration_ms = (time.time() - start_time) * 1000
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Media analysis error: {e}", exc_info=True)
+            
+            return AnalysisResult(
+                media_type=media_type,
+                provider=provider or Provider.ANTHROPIC,
+                success=False,
+                error=str(e),
+                duration_ms=(time.time() - start_time) * 1000,
+            )
 
 
-async def _process_image(url: str, config: dict) -> Optional[MediaUnderstandingResult]:
-    """Process image with vision model.
+# Convenience function
+async def analyze_media(
+    path: Path | str,
+    prompt: str | None = None,
+    **kwargs
+) -> AnalysisResult:
+    """
+    Analyze media (convenience function)
     
     Args:
-        url: Image URL
-        config: Configuration
-    
+        path: File path or URL
+        prompt: Optional prompt
+        **kwargs: Additional options
+        
     Returns:
-        MediaUnderstandingResult with description
+        Analysis result
     """
-    # In production, would use vision model
-    # For now, return placeholder
-    return MediaUnderstandingResult(
-        media_type="image",
-        url=url,
-        description="[Image description would be generated by vision model]",
-        provider="placeholder",
-        model="placeholder"
-    )
-
-
-async def _process_audio(url: str, config: dict) -> Optional[MediaUnderstandingResult]:
-    """Process audio with speech-to-text.
-    
-    Args:
-        url: Audio URL
-        config: Configuration
-    
-    Returns:
-        MediaUnderstandingResult with transcript
-    """
-    # In production, would use Deepgram, OpenAI Whisper, etc.
-    return MediaUnderstandingResult(
-        media_type="audio",
-        url=url,
-        transcript="[Audio transcript would be generated by STT model]",
-        provider="placeholder",
-        model="placeholder"
-    )
-
-
-async def _process_video(url: str, config: dict) -> Optional[MediaUnderstandingResult]:
-    """Process video with vision/audio models.
-    
-    Args:
-        url: Video URL
-        config: Configuration
-    
-    Returns:
-        MediaUnderstandingResult with description
-    """
-    # In production, would use Google Video API, etc.
-    return MediaUnderstandingResult(
-        media_type="video",
-        url=url,
-        description="[Video description would be generated by video understanding model]",
-        provider="placeholder",
-        model="placeholder"
-    )
+    runner = MediaUnderstandingRunner()
+    return await runner.analyze(path, prompt=prompt, **kwargs)

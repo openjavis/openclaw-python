@@ -21,6 +21,31 @@ from .types import Skill, SkillEntry
 logger = logging.getLogger(__name__)
 
 
+class SkillLoader:
+    """Skill loader class for managing skills from multiple directories"""
+    
+    def __init__(self, bundled_skills_dir: Path | str | None = None):
+        """
+        Initialize skill loader
+        
+        Args:
+            bundled_skills_dir: Directory containing bundled skills
+        """
+        self.bundled_skills_dir = Path(bundled_skills_dir) if bundled_skills_dir else None
+        self.skills: list[Skill] = []
+    
+    def load_all_skills(self) -> None:
+        """Load all skills from configured directories"""
+        if self.bundled_skills_dir:
+            bundled = load_skills_from_dir(self.bundled_skills_dir, source="bundled")
+            self.skills.extend(bundled)
+            logger.info(f"Loaded {len(bundled)} bundled skills")
+    
+    def get_skills(self) -> list[Skill]:
+        """Get all loaded skills"""
+        return self.skills
+
+
 def load_skills_from_dir(
     directory: Path | str,
     source: str = "workspace"
@@ -149,7 +174,8 @@ def load_skill_from_file(
     return Skill(
         name=name.strip(),
         description=description.strip(),
-        location=str(file_path)
+        location=str(file_path),
+        source=source,
     )
 
 

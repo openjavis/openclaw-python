@@ -1,31 +1,49 @@
-"""Media Understanding types."""
-
+"""Type definitions for media understanding"""
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Literal
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 
-class MediaScope(str, Enum):
-    """Scope for media understanding."""
-    
-    AUTO = "auto"  # Automatic based on config
-    ALL = "all"  # Process all media
-    IMAGES = "images"  # Only images
-    AUDIO = "audio"  # Only audio
-    VIDEO = "video"  # Only video
-    NONE = "none"  # No media understanding
+class MediaType(str, Enum):
+    """Media type"""
+    IMAGE = "image"
+    AUDIO = "audio"
+    VIDEO = "video"
+    UNKNOWN = "unknown"
+
+
+class Provider(str, Enum):
+    """Analysis provider"""
+    ANTHROPIC = "anthropic"
+    OPENAI = "openai"
+    GOOGLE = "google"
+    DEEPGRAM = "deepgram"
+    GROQ = "groq"
+    MINIMAX = "minimax"
 
 
 @dataclass
-class MediaUnderstandingResult:
-    """Result of media understanding."""
+class AnalysisResult:
+    """Media analysis result"""
     
-    media_type: Literal["image", "audio", "video"]
-    url: str
-    description: Optional[str] = None
-    transcript: Optional[str] = None
-    error: Optional[str] = None
-    provider: Optional[str] = None
-    model: Optional[str] = None
+    media_type: MediaType
+    provider: Provider
+    
+    # Text description/transcription
+    text: str = ""
+    
+    # Structured data
+    data: dict[str, Any] = field(default_factory=dict)
+    
+    # Confidence score (0-1)
+    confidence: float | None = None
+    
+    # Processing metadata
+    duration_ms: float | None = None
+    model: str | None = None
+    
+    # Error information
+    error: str | None = None
+    success: bool = True

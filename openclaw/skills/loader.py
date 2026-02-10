@@ -102,12 +102,15 @@ class SkillLoader:
     def load_all_skills(self) -> dict[str, Skill]:
         """Load skills from all sources with precedence"""
         # Load order (lowest to highest precedence):
-        # 1. Bundled skills
-        # 2. Managed skills
-        # 3. Workspace skills
+        # 1. Bundled skills (openclaw/skills/)
+        # 2. Managed skills (~/.openclaw/skills/)
+        # 3. Workspace skills (~/.openclaw/workspace/skills/)
 
-        # Bundled skills
-        bundled_dir = Path(__file__).parent.parent.parent / "skills"
+        # Bundled skills - Fix path to point to openclaw/skills/ not top-level skills/
+        # Path(__file__) = openclaw/skills/loader.py
+        # parent = openclaw/skills/
+        # So bundled_dir should just be parent directory
+        bundled_dir = Path(__file__).parent
         self.load_from_directory(bundled_dir, "bundled")
 
         # Managed skills

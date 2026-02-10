@@ -17,7 +17,7 @@ class RequestFrame(BaseModel):
     """Client request frame"""
 
     type: Literal["req"] = "req"
-    id: str = Field(..., description="Unique request ID")
+    id: str | int = Field(..., description="Unique request ID (string or integer)")
     method: str = Field(..., description="Method name (e.g., 'connect', 'agent', 'chat.send')")
     params: dict[str, Any] | None = Field(default=None, description="Method parameters")
 
@@ -26,7 +26,7 @@ class ResponseFrame(BaseModel):
     """Server response frame"""
 
     type: Literal["res"] = "res"
-    id: str = Field(..., description="Request ID this response corresponds to")
+    id: str | int = Field(..., description="Request ID this response corresponds to (string or integer)")
     ok: bool = Field(..., description="Success indicator")
     payload: Any | None = Field(default=None, description="Response data")
     error: ErrorShape | None = Field(default=None, description="Error information if ok=False")
@@ -50,7 +50,15 @@ class ConnectRequest(BaseModel):
 
     minProtocol: int = Field(default=1, description="Minimum supported protocol version")
     maxProtocol: int = Field(default=1, description="Maximum supported protocol version")
-    client: dict[str, Any] = Field(..., description="Client information")
+    client: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "id": "gateway-client",
+            "version": "1.0.0",
+            "platform": "python",
+            "mode": "backend"
+        },
+        description="Client information"
+    )
     role: str = Field(default="client", description="Client role (client/node)")
     scopes: list[str] | None = Field(default=None, description="Requested scopes")
     auth: dict[str, Any] | None = Field(default=None, description="Authentication credentials")

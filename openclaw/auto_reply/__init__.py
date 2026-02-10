@@ -1,31 +1,21 @@
-"""Auto-Reply System for OpenClaw.
+"""Auto-Reply system for openclaw
 
-This module implements automatic message processing and reply generation,
-matching the TypeScript OpenClaw auto-reply system.
+Handles automated message processing and response generation.
+Matches TypeScript openclaw/src/auto-reply/ architecture.
 """
 
-from __future__ import annotations
-
-from .types import (
-    ReplyPayload,
-    GetReplyOptions,
-    BlockReplyContext,
-    ModelSelectedContext,
-)
-from .tokens import (
-    HEARTBEAT_TOKEN,
-    SILENT_REPLY_TOKEN,
-    is_silent_reply_text,
-)
-from .reply import get_reply
+from .dispatch import dispatch_inbound_message
+from .inbound_context import finalize_inbound_context, InboundContext
+from .envelope import InboundEnvelope
+from .command_detection import detect_command
+from .commands_registry import CommandRegistry, get_global_command_registry
 
 __all__ = [
-    "ReplyPayload",
-    "GetReplyOptions",
-    "BlockReplyContext",
-    "ModelSelectedContext",
-    "HEARTBEAT_TOKEN",
-    "SILENT_REPLY_TOKEN",
-    "is_silent_reply_text",
-    "get_reply",
+    "dispatch_inbound_message",
+    "finalize_inbound_context",
+    "InboundContext",
+    "InboundEnvelope",
+    "detect_command",
+    "CommandRegistry",
+    "get_global_command_registry",
 ]

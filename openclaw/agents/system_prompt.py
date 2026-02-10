@@ -39,6 +39,7 @@ from .system_prompt_sections import (
     SILENT_REPLY_TOKEN,
     build_cli_quick_reference_section,
     build_docs_section,
+    build_exec_capabilities_section,
     build_heartbeats_section,
     build_memory_section,
     build_messaging_section,
@@ -73,6 +74,7 @@ def build_agent_system_prompt(
     prompt_mode: Literal["full", "minimal", "none"] = "full",
     runtime_info: dict | None = None,
     sandbox_info: dict | None = None,
+    exec_config: dict | None = None,
     user_timezone: str | None = None,
     owner_numbers: list[str] | None = None,
     extra_system_prompt: str | None = None,
@@ -221,6 +223,10 @@ def build_agent_system_prompt(
     # ── 13. Sandbox ──────────────────────────────────────────────────
     lines.extend(build_sandbox_section(sandbox_info))
 
+    # ── 13.5. Exec Capabilities ──────────────────────────────────────
+    # Add exec capabilities section to inform agent about bash tool abilities
+    lines.extend(build_exec_capabilities_section(exec_config))
+
     # ── 14. User Identity ────────────────────────────────────────────
     owner_line = None
     if owner_numbers:
@@ -315,7 +321,14 @@ def build_agent_system_prompt(
     ))
 
     # Filter empty strings that were added only for conditional sections
-    return "\n".join(line for line in lines if line is not None)
+    prompt = "\n".join(line for line in lines if line is not None)
+    
+    # Replace session workspace placeholder
+    # Note: For now, using workspace_dir as fallback
+    # Future: Add session_workspace parameter and use resolve_session_workspace_dir()
+    prompt = prompt.replace("{{SESSION_WORKSPACE}}", str(workspace_dir))
+    
+    return prompt
 
 
 def _is_soul_file(file: dict) -> bool:

@@ -15,6 +15,7 @@ from .channel_actions import (
     WhatsAppActionsTool,
 )
 from .cron import CronTool
+from .document_gen import PPTGeneratorTool, PDFGeneratorTool
 from .file_ops import EditFileTool, ReadFileTool, WriteFileTool
 from .image import ImageTool
 from .memory import MemoryGetTool, MemorySearchTool
@@ -79,7 +80,9 @@ class ToolRegistry:
 
         # Advanced tools
         self.register(BrowserTool())
-        self.register(CronTool())
+        self.register(CronTool(self._channel_registry, self._session_manager))
+        self.register(PPTGeneratorTool())
+        self.register(PDFGeneratorTool())
         self.register(TTSTool())
         self.register(ProcessTool())
 
