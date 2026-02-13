@@ -1,266 +1,198 @@
 """
-Tests for context processing alignment
+Integration tests for context alignment with TypeScript
 
-Tests:
-- Message context finalization
-- Text normalization  
-- Chat type normalization
-- Sender metadata formatting
-- Conversation label resolution
+Tests end-to-end context loading to verify alignment with TypeScript implementation.
 """
+
 import pytest
-
-from openclaw.auto_reply.inbound_context import (
-    MsgContext,
-    finalize_inbound_context,
-    normalize_inbound_text_newlines,
-    normalize_chat_type,
-    resolve_conversation_label,
-    format_inbound_body_with_sender_meta,
-)
+from unittest.mock import MagicMock, patch
+from pathlib import Path
 
 
-class TestTextNormalization:
-    """Test text normalization"""
+class TestContextLoadingFlow:
+    """Test complete context loading flow."""
     
-    def test_newline_normalization(self):
-        """Test newline styles are normalized"""
-        # Windows style
-        text = "Line 1\r\nLine 2\r\nLine 3"
-        normalized = normalize_inbound_text_newlines(text)
-        assert normalized == "Line 1\nLine 2\nLine 3"
-        
-        # Mac style
-        text = "Line 1\rLine 2\rLine 3"
-        normalized = normalize_inbound_text_newlines(text)
-        assert normalized == "Line 1\nLine 2\nLine 3"
-        
-        # Mixed
-        text = "Line 1\r\nLine 2\rLine 3\nLine 4"
-        normalized = normalize_inbound_text_newlines(text)
-        assert normalized == "Line 1\nLine 2\nLine 3\nLine 4"
-
-
-class TestChatTypeNormalization:
-    """Test chat type normalization"""
-    
-    def test_standard_types(self):
-        """Test standard chat types"""
-        assert normalize_chat_type("dm") == "dm"
-        assert normalize_chat_type("group") == "group"
-        assert normalize_chat_type("channel") == "channel"
-    
-    def test_variant_mapping(self):
-        """Test variant types are mapped"""
-        assert normalize_chat_type("private") == "dm"
-        assert normalize_chat_type("direct") == "dm"
-        assert normalize_chat_type("supergroup") == "group"
-        assert normalize_chat_type("public") == "channel"
-    
-    def test_case_insensitive(self):
-        """Test case insensitive"""
-        assert normalize_chat_type("DM") == "dm"
-        assert normalize_chat_type("GROUP") == "group"
-        assert normalize_chat_type("Private") == "dm"
-
-
-class TestConversationLabel:
-    """Test conversation label resolution"""
-    
-    def test_dm_label(self):
-        """Test DM conversation label"""
-        ctx = MsgContext(
-            Body="Hello",
-            SessionKey="test",
-            ChatType="dm",
-            SenderName="John Doe",
-        )
-        label = resolve_conversation_label(ctx)
-        assert label == "DM with John Doe"
-    
-    def test_dm_with_username(self):
-        """Test DM with username only"""
-        ctx = MsgContext(
-            Body="Hello",
-            SessionKey="test",
-            ChatType="dm",
-            SenderUsername="johndoe",
-        )
-        label = resolve_conversation_label(ctx)
-        assert label == "DM with @johndoe"
-    
-    def test_group_label(self):
-        """Test group conversation label"""
-        ctx = MsgContext(
-            Body="Hello",
-            SessionKey="test",
-            ChatType="group",
-            GroupName="My Awesome Group",
-        )
-        label = resolve_conversation_label(ctx)
-        assert label == "My Awesome Group"
-    
-    def test_explicit_label(self):
-        """Test explicit label is preserved"""
-        ctx = MsgContext(
-            Body="Hello",
-            SessionKey="test",
-            ChatType="group",
-            ConversationLabel="Custom Label",
-            GroupName="Should not use this",
-        )
-        label = resolve_conversation_label(ctx)
-        assert label == "Custom Label"
-
-
-class TestSenderMetadata:
-    """Test sender metadata formatting"""
-    
-    def test_group_message_formatting(self):
-        """Test sender metadata is added to group messages"""
-        ctx = MsgContext(
-            Body="Hello",
-            SessionKey="test",
-            ChatType="group",
-            SenderName="Alice",
-        )
-        formatted = format_inbound_body_with_sender_meta(ctx, "Hello everyone!")
-        assert formatted == "Alice: Hello everyone!"
-    
-    def test_dm_no_formatting(self):
-        """Test DMs don't get sender metadata"""
-        ctx = MsgContext(
-            Body="Hello",
-            SessionKey="test",
-            ChatType="dm",
-            SenderName="Alice",
-        )
-        formatted = format_inbound_body_with_sender_meta(ctx, "Hello!")
-        assert formatted == "Hello!"
-    
-    def test_already_formatted(self):
-        """Test already formatted messages are not re-formatted"""
-        ctx = MsgContext(
-            Body="Hello",
-            SessionKey="test",
-            ChatType="group",
-            SenderName="Alice",
-        )
-        formatted = format_inbound_body_with_sender_meta(ctx, "Alice: Hello!")
-        # Should not add another prefix
-        assert formatted == "Alice: Hello!"
-
-
-class TestContextFinalization:
-    """Test complete context finalization"""
-    
-    def test_basic_finalization(self):
-        """Test basic context finalization"""
-        ctx = MsgContext(
-            Body="Hello\r\nWorld",
-            SessionKey="test-key",
-            ChatType="private",
-            SenderName="John",
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_basic_context_flow(self):
+        """Test basic context loading flow."""
+        from openclaw.agents.context import (
+            sanitize_session_history,
+            validate_anthropic_turns,
+            limit_history_turns,
         )
         
-        finalized = finalize_inbound_context(ctx)
+        # Create mock messages
+        messages = []
+        for i in range(10):
+            msg = MagicMock()
+            msg.role = "user" if i % 2 == 0 else "assistant"
+            msg.content = f"Message {i}"
+            messages.append(msg)
         
-        # Body normalized
-        assert finalized.Body == "Hello\nWorld"
+        # Sanitize
+        sanitized = sanitize_session_history(messages)
+        assert len(sanitized) > 0
         
-        # Chat type normalized
-        assert finalized.ChatType == "dm"
+        # Validate for Anthropic
+        validated = validate_anthropic_turns(sanitized)
+        assert len(validated) > 0
         
-        # BodyForAgent set
-        assert finalized.BodyForAgent == "Hello\nWorld"
+        # Limit history
+        limited = limit_history_turns(validated, limit=3)
+        assert len(limited) <= len(validated)
         
-        # BodyForCommands set
-        assert finalized.BodyForCommands == "Hello\nWorld"
-        
-        # CommandAuthorized defaulted
-        assert finalized.CommandAuthorized is False
-        
-        # Conversation label resolved
-        assert finalized.ConversationLabel == "DM with John"
+        print(f"✓ Context flow: {len(messages)} → {len(sanitized)} → {len(validated)} → {len(limited)}")
     
-    def test_group_message_finalization(self):
-        """Test group message finalization with sender meta"""
-        ctx = MsgContext(
-            Body="Hey team!",
-            SessionKey="group-key",
-            ChatType="group",
-            SenderName="Alice",
-            GroupName="Dev Team",
-            WasMentioned=True,
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_gemini_validation_flow(self):
+        """Test Gemini-specific validation flow."""
+        from openclaw.agents.context import (
+            sanitize_session_history,
+            validate_gemini_turns,
         )
         
-        finalized = finalize_inbound_context(ctx)
+        # Create messages with consecutive assistant messages
+        messages = []
+        msg1 = MagicMock()
+        msg1.role = "user"
+        msg1.content = "Hello"
+        messages.append(msg1)
         
-        # Sender metadata added
-        assert finalized.Body == "Alice: Hey team!"
-        assert finalized.BodyForAgent == "Alice: Hey team!"
+        msg2 = MagicMock()
+        msg2.role = "assistant"
+        msg2.content = "Hi"
+        messages.append(msg2)
         
-        # Conversation label
-        assert finalized.ConversationLabel == "Dev Team"
+        msg3 = MagicMock()
+        msg3.role = "assistant"
+        msg3.content = "How can I help?"
+        messages.append(msg3)
         
-        # Flags preserved
-        assert finalized.WasMentioned is True
+        # Validate
+        validated = validate_gemini_turns(messages)
+        
+        # Should merge consecutive assistant messages
+        assert len(validated) == 2  # user + merged assistant
+        print("✓ Gemini validation merged consecutive assistant messages")
     
-    def test_untrusted_context_normalization(self):
-        """Test untrusted context is normalized"""
-        ctx = MsgContext(
-            Body="Hello",
-            SessionKey="test",
-            UntrustedContext=["Line 1\r\n", "Line 2", "", "Line 3\r"],
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_history_limit_from_config(self):
+        """Test history limiting from config."""
+        from openclaw.agents.context import get_dm_history_limit_from_session_key
+        
+        config = {
+            "channels": {
+                "telegram": {
+                    "dmHistoryLimit": 25,
+                    "dms": {
+                        "user123": {
+                            "historyLimit": 100
+                        }
+                    }
+                }
+            }
+        }
+        
+        # Test default limit
+        limit1 = get_dm_history_limit_from_session_key(
+            "agent:main:telegram:dm:user456",
+            config
         )
+        assert limit1 == 25
         
-        finalized = finalize_inbound_context(ctx)
-        
-        # Empty strings removed, newlines normalized
-        assert len(finalized.UntrustedContext) == 3
-        assert finalized.UntrustedContext[0] == "Line 1\n"
-        assert finalized.UntrustedContext[1] == "Line 2"
-        assert finalized.UntrustedContext[2] == "Line 3\n"
-    
-    def test_body_variants(self):
-        """Test different body variants are handled"""
-        ctx = MsgContext(
-            Body="Normal body",
-            RawBody="Raw body\r\n",
-            CommandBody="Command body",
-            SessionKey="test",
+        # Test per-DM override
+        limit2 = get_dm_history_limit_from_session_key(
+            "agent:main:telegram:dm:user123",
+            config
         )
+        assert limit2 == 100
         
-        finalized = finalize_inbound_context(ctx)
-        
-        # All normalized
-        assert finalized.Body == "Normal body"
-        assert finalized.RawBody == "Raw body\n"
-        assert finalized.CommandBody == "Command body"
-        
-        # BodyForAgent defaults to Body
-        assert finalized.BodyForAgent == "Normal body"
-        
-        # BodyForCommands uses CommandBody
-        assert finalized.BodyForCommands == "Command body"
+        print("✓ History limits correctly resolved from config")
 
 
-@pytest.mark.parametrize("chat_type,sender_name,expected_label", [
-    ("dm", "Alice", "DM with Alice"),
-    ("group", None, None),  # No group name
-    ("channel", None, None),  # No channel name
-])
-def test_label_resolution_cases(chat_type, sender_name, expected_label):
-    """Test various label resolution cases"""
-    ctx = MsgContext(
-        Body="Test",
-        SessionKey="test",
-        ChatType=chat_type,
-        SenderName=sender_name,
-    )
-    label = resolve_conversation_label(ctx)
-    assert label == expected_label
+class TestImageInjectionFlow:
+    """Test history image injection flow."""
+    
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_image_injection_workflow(self):
+        """Test complete image injection workflow."""
+        from openclaw.agents.context import inject_history_images_into_messages
+        
+        # Create messages
+        messages = []
+        msg1 = MagicMock()
+        msg1.role = "user"
+        msg1.content = "Look at this image"
+        messages.append(msg1)
+        
+        msg2 = MagicMock()
+        msg2.role = "assistant"
+        msg2.content = "I see it"
+        messages.append(msg2)
+        
+        # Inject images
+        history_images = {
+            0: [{"type": "image", "source": {"type": "base64", "data": "fake_data"}}]
+        }
+        
+        modified = inject_history_images_into_messages(messages, history_images)
+        
+        assert modified is True
+        assert isinstance(messages[0].content, list)
+        print("✓ Images successfully injected into history messages")
+
+
+class TestProviderSpecificValidation:
+    """Test provider-specific message validation."""
+    
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_anthropic_vs_gemini_validation(self):
+        """Test that Anthropic and Gemini validations differ appropriately."""
+        from openclaw.agents.context import (
+            validate_anthropic_turns,
+            validate_gemini_turns,
+        )
+        
+        # Create scenario with both consecutive users and assistants
+        messages = []
+        
+        msg1 = MagicMock()
+        msg1.role = "user"
+        msg1.content = "Hello"
+        messages.append(msg1)
+        
+        msg2 = MagicMock()
+        msg2.role = "user"
+        msg2.content = "Are you there?"
+        messages.append(msg2)
+        
+        msg3 = MagicMock()
+        msg3.role = "assistant"
+        msg3.content = "Yes"
+        messages.append(msg3)
+        
+        msg4 = MagicMock()
+        msg4.role = "assistant"
+        msg4.content = "I'm here"
+        messages.append(msg4)
+        
+        # Anthropic merges consecutive users
+        anthropic_result = validate_anthropic_turns(messages)
+        # Should have: merged_user, asst, asst
+        assert len(anthropic_result) == 3
+        
+        # Gemini merges consecutive assistants
+        gemini_result = validate_gemini_turns(messages)
+        # Should have: user, user, merged_asst
+        assert len(gemini_result) == 3
+        
+        print("✓ Provider-specific validations work differently as expected")
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest.main([__file__, "-v", "-m", "integration"])

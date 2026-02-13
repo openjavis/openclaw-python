@@ -43,6 +43,7 @@ def detect_image_references(text: str) -> list[DetectedImageRef]:
     Detect image references in text
     
     Patterns detected:
+    - ![alt text](path/to/image.png) - Markdown syntax
     - [media attached: path.jpg (type) | url]
     - [Image: source: /path/to/image.jpg]
     - /absolute/path/to/image.png
@@ -70,6 +71,13 @@ def detect_image_references(text: str) -> list[DetectedImageRef]:
         resolved = str(Path(trimmed).expanduser()) if trimmed.startswith("~") else trimmed
         refs.append(DetectedImageRef(raw=trimmed, type="path", resolved=resolved))
 
+    # Pattern 0: Markdown image syntax: ![alt](path)
+    markdown_pattern = r"!\[([^\]]*)\]\(([^)]+)\)"
+    for match in re.finditer(markdown_pattern, text):
+        path = match.group(2).strip()
+        if path:
+            add_path_ref(path)
+
     # Pattern 1: [media attached: path (type) | url] or [media attached N/M: path (type) | url]
     # Each bracket = ONE file. The | separates path from URL, not multiple files.
     media_pattern = r"\[media attached(?:\s+\d+/\d+)?:\s*([^\]]+)\]"
@@ -89,7 +97,7 @@ def detect_image_references(text: str) -> list[DetectedImageRef]:
             re.IGNORECASE,
         )
         if path_match and path_match.group(1):
-            add_path_ref(path_match.group(1).trim())
+            add_path_ref(path_match.group(1).strip())
 
     # Pattern 2: [Image: source: /path/...] format from messaging systems
     image_source_pattern = (
@@ -180,10 +188,92 @@ def detect_images_from_history(messages: list[dict]) -> list[DetectedImageRef]:
     return all_refs
 
 
+def is_path_in_sandbox(path: Path, sandbox_root: Path | None) -> bool:
+    """
+    Check if path is within sandbox directory.
+    
+    Args:
+        path: Path to check
+        sandbox_root: Sandbox root directory (None = no restriction)
+        
+    Returns:
+        True if path is allowed, False if outside sandbox
+    """
+    if not sandbox_root:
+        return True
+    
+    try:
+        # Resolve to absolute paths
+        abs_path = path.resolve()
+        abs_sandbox = sandbox_root.resolve()
+        
+        # Check if path is relative to sandbox
+        return abs_path.is_relative_to(abs_sandbox)
+    except (ValueError, OSError):
+        return False
+
+
+def load_image_data(path: Path, max_size_bytes: int | None = None) -> dict | None:
+    """
+    Load image file and convert to content format.
+    
+    Args:
+        path: Path to image file
+        max_size_bytes: Maximum file size (None = no limit)
+        
+    Returns:
+        Image content dict with 'type', 'source', etc., or None if failed
+    """
+    try:
+        if not path.exists() or not path.is_file():
+            logger.warning(f"Image file not found: {path}")
+            return None
+        
+        # Check file size
+        file_size = path.stat().st_size
+        if max_size_bytes and file_size > max_size_bytes:
+            logger.warning(f"Image too large ({file_size} bytes): {path}")
+            return None
+        
+        # Read image data
+        with open(path, "rb") as f:
+            data = f.read()
+        
+        # Convert to base64
+        import base64
+        encoded = base64.b64encode(data).decode("utf-8")
+        
+        # Determine media type
+        suffix = path.suffix.lower()
+        media_type_map = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+        }
+        media_type = media_type_map.get(suffix, "image/jpeg")
+        
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": encoded,
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to load image {path}: {e}")
+        return None
+
+
 def smart_load_images(
     current_prompt: str,
     history_messages: list[dict] | None = None,
     existing_images: list[str] | None = None,
+    workspace_dir: Path | None = None,
+    sandbox_root: Path | None = None,
+    max_image_size: int | None = None,
 ) -> dict:
     """
     Smart image loading for agent context
@@ -193,11 +283,16 @@ def smart_load_images(
     - Deduplicates images across current prompt and history
     - Skips images already loaded in previous messages
     - Only scans user messages (not assistant messages)
+    - Respects sandbox path restrictions
+    - Converts images to base64 format
     
     Args:
         current_prompt: Current user prompt text
         history_messages: Previous conversation messages
         existing_images: Images already attached to current message
+        workspace_dir: Workspace directory for resolving relative paths
+        sandbox_root: Sandbox root (images must be within this directory)
+        max_image_size: Maximum image size in bytes
     
     Returns:
         Dictionary with:
@@ -214,7 +309,8 @@ def smart_load_images(
         ...     history_messages=[
         ...         {"role": "user", "content": "Look at ~/old_chart.png"},
         ...         {"role": "assistant", "content": "I see the chart"}
-        ...     ]
+        ...     ],
+        ...     workspace_dir=Path.cwd()
         ... )
         >>> result["loaded_count"]
         2  # One from current, one from history
@@ -246,33 +342,58 @@ def smart_load_images(
 
     for ref in prompt_refs:
         path = Path(ref.resolved)
+        
+        # Resolve relative paths from workspace
+        if not path.is_absolute() and workspace_dir:
+            path = workspace_dir / path
+        
+        # Check sandbox restrictions
+        if not is_path_in_sandbox(path, sandbox_root):
+            logger.warning(f"Image outside sandbox, skipped: {path}")
+            skipped_count += 1
+            continue
+        
         if path.exists() and path.is_file():
-            # Check if not already in existing_images
-            path_str = str(path)
-            if path_str not in current_images:
-                current_images.append(path_str)
+            # Load image data
+            image_content = load_image_data(path, max_image_size)
+            if image_content:
+                current_images.append(image_content)
                 loaded_count += 1
                 logger.debug(f"Loaded current prompt image: {path}")
             else:
                 skipped_count += 1
-                logger.debug(f"Skipped duplicate image: {path}")
         else:
             skipped_count += 1
             logger.debug(f"Image file not found: {path}")
 
-    # For history images, we would ideally inject them at specific message indices
-    # For now, we'll simplify by just tracking them
+    # Load history images, organized by message index
     history_images_by_index = {}
     for ref in unique_history_refs:
         path = Path(ref.resolved)
+        
+        # Resolve relative paths from workspace
+        if not path.is_absolute() and workspace_dir:
+            path = workspace_dir / path
+        
+        # Check sandbox restrictions
+        if not is_path_in_sandbox(path, sandbox_root):
+            logger.warning(f"History image outside sandbox, skipped: {path}")
+            skipped_count += 1
+            continue
+        
         if path.exists() and path.is_file():
             idx = ref.message_index
             if idx is not None:
-                if idx not in history_images_by_index:
-                    history_images_by_index[idx] = []
-                history_images_by_index[idx].append(str(path))
-                loaded_count += 1
-                logger.debug(f"Loaded history image for message[{idx}]: {path}")
+                # Load image data
+                image_content = load_image_data(path, max_image_size)
+                if image_content:
+                    if idx not in history_images_by_index:
+                        history_images_by_index[idx] = []
+                    history_images_by_index[idx].append(image_content)
+                    loaded_count += 1
+                    logger.debug(f"Loaded history image for message[{idx}]: {path}")
+                else:
+                    skipped_count += 1
         else:
             skipped_count += 1
 
