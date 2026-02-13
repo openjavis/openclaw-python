@@ -233,7 +233,7 @@ Configuration format:
         result = {
             "file_path": str(output_file),
             "file_type": "document",
-            "caption": f"已生成演示文稿：{config.get('title', 'Presentation')}"
+            "caption": f"Generated presentation: {config.get('title', 'Presentation')}"
         }
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(0)

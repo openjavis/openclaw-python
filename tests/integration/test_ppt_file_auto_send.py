@@ -72,7 +72,7 @@ class MockPPTTool(AgentTool):
         file_info = {
             "file_path": str(output_path),
             "file_type": "document",
-            "caption": f"已生成演示文稿：{params.get('title', 'Test')}"
+            "caption": f"Generated presentation: {params.get('title', 'Test')}"
         }
         return ToolResult(
             success=True,
@@ -183,7 +183,7 @@ async def test_channel_manager_sends_file(session, temp_workspace):
                 "file_path": str(ppt_path),
                 "file_type": "document",
                 "file_name": filename,
-                "caption": "已生成演示文稿：Test Presentation"
+                "caption": "Generated presentation: Test Presentation"
             }
         )
         

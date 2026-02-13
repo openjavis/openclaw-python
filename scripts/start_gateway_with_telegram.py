@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-启动 OpenClaw Gateway 并启用 Telegram channel
+Start OpenClaw Gateway and enable Telegram channel
 """
 import asyncio
 import logging
@@ -9,10 +9,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# 加载环境变量
+# Load environment variables
 load_dotenv()
 
-# 配置日志
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -20,9 +20,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 async def main():
-    """主启动函数"""
+    """Main startup function"""
     try:
-        # 导入所需模块
+        # Import required modules
         from openclaw.config import load_config
         from openclaw.gateway.server import GatewayServer
         from openclaw.channels.telegram import TelegramChannel
@@ -35,65 +35,65 @@ async def main():
         from openclaw.agents.system_prompt_params import build_system_prompt_params, get_runtime_info
         
         logger.info("=" * 60)
-        logger.info("🚀 启动 OpenClaw Gateway with Telegram")
+        logger.info("🚀 Starting OpenClaw Gateway with Telegram")
         logger.info("=" * 60)
         
-        # 1. 加载配置
-        logger.info("📋 加载配置...")
+        # 1. Load configuration
+        logger.info("📋 Loading configuration...")
         config = load_config()
         
-        # 2. 获取 Telegram Bot Token
+        # 2. Get Telegram Bot Token
         bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
         if not bot_token:
-            logger.error("❌ TELEGRAM_BOT_TOKEN 未配置")
+            logger.error("❌ TELEGRAM_BOT_TOKEN not configured")
             return
         
         logger.info(f"✅ Telegram Bot Token: {bot_token[:10]}...")
         
-        # 3. 创建 Agent Runtime (自动检测 Provider)
-        logger.info("🤖 创建 Agent Runtime...")
+        # 3. Create Agent Runtime (auto-detect Provider)
+        logger.info("🤖 Creating Agent Runtime...")
         
-        # 从配置中获取模型，或使用自动检测
+        # Get model from config or use auto-detection
         model = None
         
         if hasattr(config.agent, 'model') and config.agent.model:
             model = config.agent.model
-            logger.info(f"   使用配置的模型: {model}")
+            logger.info(f"   Using configured model: {model}")
         elif os.getenv("GOOGLE_API_KEY"):
             model = "google/gemini-3-flash-preview"
-            logger.info(f"   自动检测到 GOOGLE_API_KEY，使用: {model}")
+            logger.info(f"   Auto-detected GOOGLE_API_KEY, using: {model}")
         elif os.getenv("ANTHROPIC_API_KEY"):
             model = "anthropic/claude-3-5-sonnet-20241022"
-            logger.info(f"   自动检测到 ANTHROPIC_API_KEY，使用: {model}")
+            logger.info(f"   Auto-detected ANTHROPIC_API_KEY, using: {model}")
         elif os.getenv("OPENAI_API_KEY"):
             model = "openai/gpt-4"
-            logger.info(f"   自动检测到 OPENAI_API_KEY，使用: {model}")
+            logger.info(f"   Auto-detected OPENAI_API_KEY, using: {model}")
         else:
-            logger.error("❌ 没有配置任何 API Key")
+            logger.error("❌ No API Key configured")
             return
         
-        # 不启用 Gemini 内置 Google Search，使用我们注册的 web_search 工具
-        # 原始 OpenClaw 使用 Brave Search 作为 web_search 工具
-        # 我们使用 DuckDuckGo 实现的 web_search (在 19 个工具中)
-        logger.info(f"   📋 将使用注册的 19 个工具（包括 web_search）")
+        # Disable Gemini's built-in Google Search, use our registered web_search tool
+        # Original OpenClaw uses Brave Search as web_search tool
+        # We use DuckDuckGo implementation of web_search (in 19 tools)
+        logger.info(f"   📋 Will use registered 19 tools (including web_search)")
         
         runtime = MultiProviderRuntime(
             model=model,
-            enable_search=False,  # 禁用 Gemini 内置搜索，使用我们的工具
-            thinking_mode="HIGH"  # gemini-3-pro-preview 需要 thinking mode 才能正常工作
+            enable_search=False,  # Disable Gemini's built-in search, use our tools
+            thinking_mode="HIGH"  # gemini-3-pro-preview requires thinking mode to work properly
         )
-        logger.info("✅ Agent Runtime 创建成功 (thinking_mode=HIGH)")
+        logger.info("✅ Agent Runtime created successfully (thinking_mode=HIGH)")
         
-        # 4. 创建 Session Manager
-        logger.info("📁 创建 Session Manager...")
+        # 4. Create Session Manager
+        logger.info("📁 Creating Session Manager...")
         workspace_dir = Path.home() / ".openclaw" / "workspace"
         workspace_dir.mkdir(parents=True, exist_ok=True)
         
         session_manager = SessionManager(workspace_dir=workspace_dir)
-        logger.info(f"✅ Session Manager 创建成功: {workspace_dir}")
+        logger.info(f"✅ Session Manager created successfully: {workspace_dir}")
         
-        # 5. 创建 Tool Registry 并注册工具
-        logger.info("🔧 创建 Tool Registry...")
+        # 5. Create Tool Registry and register tools
+        logger.info("🔧 Creating Tool Registry...")
         
         # Create tool registry without auto-register, we'll register manually
         tool_registry = ToolRegistry(
@@ -153,23 +153,23 @@ async def main():
         
         tools = tool_registry.list_tools()
         tool_names = [tool.name for tool in tools]
-        logger.info(f"✅ Tool Registry 创建成功，注册了 {len(tools)} 个工具")
-        logger.info(f"   工具列表: {tool_names[:5]}{'...' if len(tools) > 5 else ''}")
+        logger.info(f"✅ Tool Registry created successfully, registered {len(tools)} tools")
+        logger.info(f"   Tool list: {tool_names[:5]}{'...' if len(tools) > 5 else ''}")
         logger.info(f"   Bash tool: security={exec_config['security']}, safe_bins count={len(exec_config['safe_bins'])}")
         
-        # 6. 加载 Skills
-        logger.info("📚 加载 Skills...")
+        # 6. Load Skills
+        logger.info("📚 Loading Skills...")
         try:
             skill_loader = SkillLoader()
             
-            # 从多个目录加载 skills
+            # Load skills from multiple directories
             # Add project's own skills directory first
             project_skills_dir = Path(__file__).parent / "openclaw" / "skills"
             bundled_skills_dir = Path.home() / ".openclaw" / "bundled-skills"
             managed_skills_dir = Path.home() / ".openclaw" / "skills"
             workspace_skills_dir = workspace_dir / "skills"
             
-            # 创建目录（如果不存在）
+            # Create directories if they don't exist
             managed_skills_dir.mkdir(parents=True, exist_ok=True)
             workspace_skills_dir.mkdir(parents=True, exist_ok=True)
             
@@ -185,14 +185,14 @@ async def main():
                 if skills_dir.exists():
                     loaded = skill_loader.load_from_directory(skills_dir, source=source)
                     all_skills.extend(loaded)
-                    logger.debug(f"   从 {skills_dir} ({source}) 加载了 {len(loaded)} 个 skills")
+                    logger.debug(f"   Loaded {len(loaded)} skills from {skills_dir} ({source})")
             
-            # 过滤合格的 skills
+            # Filter eligible skills
             eligible_skills_dict = skill_loader.get_eligible_skills()
             eligible_skills = list(eligible_skills_dict.values())
-            logger.info(f"✅ Skills 加载成功，{len(all_skills)} 个总计，{len(eligible_skills)} 个合格")
+            logger.info(f"✅ Skills loaded successfully, {len(all_skills)} total, {len(eligible_skills)} eligible")
             
-            # 格式化 skills 为提示
+            # Format skills for prompt
             skills_for_prompt = [
                 {
                     "name": skill.name,
@@ -205,12 +205,12 @@ async def main():
             skills_prompt = format_skills_for_prompt(skills_for_prompt)
             
         except Exception as e:
-            logger.warning(f"⚠️  Skills 加载失败: {e}")
+            logger.warning(f"⚠️  Failed to load skills: {e}")
             skills_prompt = None
             eligible_skills = []
         
-        # 7. 构建 System Prompt (使用新架构)
-        logger.info("📝 构建 System Prompt...")
+        # 7. Build System Prompt (using new architecture)
+        logger.info("📝 Building System Prompt...")
         
         # Build runtime params
         params = build_system_prompt_params(
@@ -240,67 +240,67 @@ async def main():
             context_files=context_files,
         )
         
-        logger.info(f"✅ System Prompt 构建成功 ({len(system_prompt)} 字符)")
+        logger.info(f"✅ System Prompt built successfully ({len(system_prompt)} characters)")
         if params["user_timezone"]:
-            logger.info(f"   时区: {params['user_timezone']}")
+            logger.info(f"   Timezone: {params['user_timezone']}")
         if params["repo_root"]:
-            logger.info(f"   Git 仓库: {params['repo_root']}")
+            logger.info(f"   Git repository: {params['repo_root']}")
         if eligible_skills:
-            logger.info(f"   包含 {len(eligible_skills)} 个 skills")
-        logger.info(f"   加载了 {len(context_files)} 个 bootstrap 文件")
+            logger.info(f"   Includes {len(eligible_skills)} skills")
+        logger.info(f"   Loaded {len(context_files)} bootstrap files")
         
-        # 8. 创建 Gateway Server (传递工具和 system prompt)
-        logger.info("🌐 创建 Gateway Server...")
+        # 8. Create Gateway Server (passing tools and system prompt)
+        logger.info("🌐 Creating Gateway Server...")
         gateway = GatewayServer(
             config=config,
             agent_runtime=runtime,
             session_manager=session_manager,
-            tools=tools,  # 传递工具列表
-            system_prompt=system_prompt,  # 传递 system prompt
-            auto_discover_channels=False  # 手动注册
+            tools=tools,  # Pass tool list
+            system_prompt=system_prompt,  # Pass system prompt
+            auto_discover_channels=False  # Manual registration
         )
-        logger.info("✅ Gateway Server 创建成功")
+        logger.info("✅ Gateway Server created successfully")
         
-        # 9. 注册并配置 Telegram Channel
-        logger.info("📱 注册 Telegram Channel...")
+        # 9. Register and configure Telegram Channel
+        logger.info("📱 Registering Telegram Channel...")
         gateway.channel_manager.register("telegram", TelegramChannel)
         
         telegram_config = {
             "enabled": True,
             "botToken": bot_token,
-            "dmPolicy": "open",  # 允许所有人发送消息
+            "dmPolicy": "open",  # Allow all to send messages
         }
         gateway.channel_manager.configure("telegram", telegram_config)
-        logger.info("✅ Telegram Channel 已注册并配置")
+        logger.info("✅ Telegram Channel registered and configured")
         
-        # 10. 启动 Gateway (会自动启动所有 enabled 的 channels)
+        # 10. Start Gateway (will automatically start all enabled channels)
         logger.info("")
         logger.info("=" * 60)
-        logger.info(f"🎉 Gateway 启动在 ws://127.0.0.1:{config.gateway.port}")
+        logger.info(f"🎉 Gateway started at ws://127.0.0.1:{config.gateway.port}")
         logger.info("=" * 60)
         logger.info("")
-        logger.info("📋 配置信息:")
-        logger.info(f"  - 模型: {model}")
-        logger.info(f"  - 工具数量: {len(tools)}")
-        logger.info(f"  - Skills 数量: {len(eligible_skills)}")
-        logger.info(f"  - System Prompt: {len(system_prompt)} 字符")
+        logger.info("📋 Configuration:")
+        logger.info(f"  - Model: {model}")
+        logger.info(f"  - Tools count: {len(tools)}")
+        logger.info(f"  - Skills count: {len(eligible_skills)}")
+        logger.info(f"  - System Prompt: {len(system_prompt)} characters")
         logger.info(f"  - Telegram Bot: @whatisnewzhaobot")
-        logger.info(f"  - DM Policy: open (允许所有人)")
+        logger.info(f"  - DM Policy: open (allow all)")
         logger.info(f"  - Workspace: {workspace_dir}")
         logger.info("")
-        logger.info("💬 在 Telegram 中发送消息给 @whatisnewzhaobot 开始对话")
+        logger.info("💬 Send a message to @whatisnewzhaobot in Telegram to start conversation")
         logger.info("")
-        logger.info("按 Ctrl+C 停止")
+        logger.info("Press Ctrl+C to stop")
         logger.info("=" * 60)
         logger.info("")
         
-        # 启动 Gateway
+        # Start Gateway
         await gateway.start(start_channels=True)
         
     except KeyboardInterrupt:
-        logger.info("\n\n🛑 Gateway 停止")
+        logger.info("\n\n🛑 Gateway stopped")
     except Exception as e:
-        logger.error(f"❌ 启动失败: {e}", exc_info=True)
+        logger.error(f"❌ Startup failed: {e}", exc_info=True)
         raise
 
 if __name__ == "__main__":

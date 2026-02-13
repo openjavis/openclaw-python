@@ -1,13 +1,13 @@
 """
-Cron job scheduling service - 完整的AI驱动智能定时任务系统
+Cron job scheduling service - Complete AI-driven intelligent scheduled task system
 
-提供与TypeScript版本完全对齐的定时任务功能：
-- 三种调度类型（at/every/cron）
-- 隔离Agent执行（智能任务）  
-- 系统事件（简单通知）
-- 持久化存储
-- 运行日志
-- 自动交付
+Provides scheduled task features fully aligned with the TypeScript version:
+- Three scheduling types (at/every/cron)
+- Isolated Agent execution (intelligent tasks)
+- System events (simple notifications)
+- Persistent storage
+- Run logs
+- Auto delivery
 """
 
 from __future__ import annotations
@@ -33,15 +33,15 @@ logger = logging.getLogger(__name__)
 
 class CronService:
     """
-    完整的Cron调度服务
+    Complete Cron scheduling service
     
-    功能：
-    - 三种调度类型（at/every/cron）
-    - 隔离Agent执行（智能任务）
-    - 系统事件（简单通知）
-    - 持久化存储
-    - 运行日志
-    - 自动交付
+    Features:
+    - Three scheduling types (at/every/cron)
+    - Isolated Agent execution (intelligent tasks)
+    - System events (simple notifications)
+    - Persistent storage
+    - Run logs
+    - Auto delivery
     """
     
     def __init__(
@@ -53,44 +53,44 @@ class CronService:
         on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         """
-        初始化Cron服务
+        Initialize Cron service
         
         Args:
-            store_path: Job存储路径
-            log_dir: 运行日志目录
-            on_system_event: 系统事件回调 (text, agent_id)
-            on_isolated_agent: 隔离Agent执行回调 (job) -> result
-            on_event: 事件广播回调 (event)
+            store_path: Job storage path
+            log_dir: Run log directory
+            on_system_event: System event callback (text, agent_id)
+            on_isolated_agent: Isolated Agent execution callback (job) -> result
+            on_event: Event broadcast callback (event)
         """
         self.jobs: Dict[str, CronJob] = {}
         self._running = False
         
-        # 配置
+        # Configuration
         self.store_path = store_path
         self.log_dir = log_dir
         self.on_system_event = on_system_event
         self.on_isolated_agent = on_isolated_agent
         self.on_event = on_event
         
-        # 存储和日志
+        # Storage and logging
         self._store: Optional[CronStore] = None
         if store_path:
             self._store = CronStore(store_path)
         
-        # 定时器
+        # Timer
         self._timer: Optional[CronTimer] = None
         
         logger.info("CronService initialized")
     
     def start(self) -> None:
-        """启动Cron服务"""
+        """Start Cron service"""
         if self._running:
             logger.warning("CronService already running")
             return
         
         self._running = True
         
-        # 创建并启动定时器
+        # Create and start timer
         self._timer = CronTimer(on_timer_callback=self._on_timer_fired)
         self._timer.arm_timer(list(self.jobs.values()))
         
@@ -102,7 +102,7 @@ class CronService:
         })
     
     def stop(self) -> None:
-        """停止Cron服务"""
+        """Stop Cron service"""
         if not self._running:
             return
         
@@ -118,36 +118,36 @@ class CronService:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
     
-    # 兼容旧API名称
+    # Compatibility with old API name
     def shutdown(self) -> None:
-        """停止服务（兼容旧API）"""
+        """Stop service (compatible with old API)"""
         self.stop()
     
     def add_job(self, job: CronJob) -> bool:
         """
-        添加定时任务
+        Add scheduled task
         
         Args:
-            job: 任务定义
+            job: Task definition
             
         Returns:
-            成功返回True
+            True if successful
         """
         try:
-            # 计算首次运行时间
+            # Calculate first run time
             now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
             
             if job.state.next_run_ms is None:
                 job.state.next_run_ms = compute_next_run(job.schedule, now_ms)
             
-            # 添加到内存
+            # Add to memory
             self.jobs[job.id] = job
             
-            # 持久化
+            # Persist
             if self._store:
                 self._store.save(list(self.jobs.values()))
             
-            # 重新调度timer
+            # Reschedule timer
             if self._timer and self._running:
                 self._timer.arm_timer(list(self.jobs.values()))
             
@@ -167,31 +167,31 @@ class CronService:
     
     def update_job(self, job: CronJob) -> bool:
         """
-        更新任务
+        Update task
         
         Args:
-            job: 更新后的任务定义
+            job: Updated task definition
             
         Returns:
-            成功返回True
+            True if successful
         """
         try:
             if job.id not in self.jobs:
                 logger.error(f"Job {job.id} not found")
                 return False
             
-            # 重新计算next_run
+            # Recalculate next_run
             now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
             job.state.next_run_ms = compute_next_run(job.schedule, now_ms)
             
-            # 更新
+            # Update
             self.jobs[job.id] = job
             
-            # 持久化
+            # Persist
             if self._store:
                 self._store.save(list(self.jobs.values()))
             
-            # 重新调度
+            # Reschedule
             if self._timer and self._running:
                 self._timer.arm_timer(list(self.jobs.values()))
             
@@ -209,27 +209,27 @@ class CronService:
     
     def remove_job(self, job_id: str) -> bool:
         """
-        删除任务
+        Delete task
         
         Args:
-            job_id: 任务ID
+            job_id: Task ID
             
         Returns:
-            成功返回True
+            True if successful
         """
         try:
             if job_id not in self.jobs:
                 logger.error(f"Job {job_id} not found")
                 return False
             
-            # 删除
+            # Delete
             job = self.jobs.pop(job_id)
             
-            # 持久化
+            # Persist
             if self._store:
                 self._store.save(list(self.jobs.values()))
             
-            # 重新调度
+            # Reschedule
             if self._timer and self._running:
                 self._timer.arm_timer(list(self.jobs.values()))
             
@@ -247,13 +247,13 @@ class CronService:
     
     def list_jobs(self, include_disabled: bool = False) -> list[Dict[str, Any]]:
         """
-        列出所有任务
+        List all tasks
         
         Args:
-            include_disabled: 是否包含禁用的任务
+            include_disabled: Whether to include disabled tasks
             
         Returns:
-            任务列表
+            Task list
         """
         jobs = list(self.jobs.values())
         
@@ -264,13 +264,13 @@ class CronService:
     
     def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """
-        获取任务状态
+        Get task status
         
         Args:
-            job_id: 任务ID
+            job_id: Task ID
             
         Returns:
-            任务状态字典，不存在返回None
+            Task status dictionary, None if not exists
         """
         job = self.jobs.get(job_id)
         if not job:
@@ -278,20 +278,20 @@ class CronService:
         
         return self._job_to_dict(job)
     
-    # 兼容旧API名称
+    # Compatibility with old API name
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get job status (alias for get_job_status)"""
         return self.get_job_status(job_id)
     
     async def run_job_now(self, job_id: str) -> Dict[str, Any]:
         """
-        立即运行任务
+        Run task immediately
         
         Args:
-            job_id: 任务ID
+            job_id: Task ID
             
         Returns:
-            执行结果
+            Execution result
         """
         job = self.jobs.get(job_id)
         if not job:
@@ -308,10 +308,10 @@ class CronService:
     
     async def _on_timer_fired(self, due_jobs: list[CronJob]) -> None:
         """
-        定时器触发 - 执行所有到期任务
+        Timer fired - Execute all due tasks
         
         Args:
-            due_jobs: 到期的任务列表
+            due_jobs: List of due tasks
         """
         logger.info(f"⏰ Timer fired: {len(due_jobs)} due jobs")
         
@@ -326,23 +326,23 @@ class CronService:
     
     async def _execute_job(self, job: CronJob) -> Dict[str, Any]:
         """
-        执行任务
+        Execute task
         
         Args:
-            job: 要执行的任务
+            job: Task to execute
             
         Returns:
-            执行结果
+            Execution result
         """
         if not job.enabled:
             logger.debug(f"Job {job.id} is disabled, skipping")
             return {"success": False, "error": "Job disabled"}
         
-        # 更新状态
+        # Update status
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         job.state.running_at_ms = now_ms
         
-        # 广播开始事件
+        # Broadcast start event
         self._broadcast_event({
             "action": "job-started",
             "jobId": job.id,
@@ -354,7 +354,7 @@ class CronService:
         result: Dict[str, Any] = {"success": False}
         
         try:
-            # 根据payload类型执行
+            # Execute based on payload type
             if isinstance(job.payload, SystemEventPayload):
                 result = await self._execute_system_event(job)
             elif isinstance(job.payload, AgentTurnPayload):
@@ -362,7 +362,7 @@ class CronService:
             else:
                 raise ValueError(f"Unknown payload type: {type(job.payload)}")
             
-            # 更新状态
+            # Update status
             job.state.last_run_at_ms = now_ms
             job.state.last_status = "success" if result.get("success") else "error"
             job.state.last_error = result.get("error")
@@ -377,28 +377,28 @@ class CronService:
             job.state.last_error = str(e)
         
         finally:
-            # 计算耗时
+            # Calculate duration
             duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
             job.state.last_duration_ms = duration_ms
             job.state.running_at_ms = None
             
-            # 计算下次运行时间
+            # Calculate next run time
             if not job.delete_after_run:
                 job.state.next_run_ms = compute_next_run(
                     job.schedule,
                     int(datetime.now(timezone.utc).timestamp() * 1000)
                 )
             else:
-                # 一次性任务，执行后删除
+                # One-shot task, delete after execution
                 logger.info(f"Job {job.id} is one-shot, removing after execution")
                 self.remove_job(job.id)
-                return result  # 早退出，因为job已删除
+                return result  # Early exit because job is deleted
             
-            # 持久化状态
+            # Persist status
             if self._store and job.id in self.jobs:
                 self._store.save(list(self.jobs.values()))
             
-            # 记录运行日志
+            # Record run log
             if self.log_dir:
                 try:
                     run_log = CronRunLog(self.log_dir, job.id)
@@ -412,7 +412,7 @@ class CronService:
                 except Exception as e:
                     logger.warning(f"Failed to write run log: {e}")
             
-            # 广播完成事件
+            # Broadcast completion event
             self._broadcast_event({
                 "action": "job-finished",
                 "jobId": job.id,
@@ -427,13 +427,13 @@ class CronService:
     
     async def _execute_system_event(self, job: CronJob) -> Dict[str, Any]:
         """
-        执行系统事件
+        Execute system event
         
         Args:
-            job: 任务
+            job: Task
             
         Returns:
-            执行结果
+            Execution result
         """
         payload = job.payload
         if not isinstance(payload, SystemEventPayload):
@@ -468,13 +468,13 @@ class CronService:
     
     async def _execute_agent_turn(self, job: CronJob) -> Dict[str, Any]:
         """
-        执行Agent turn（智能任务）
+        Execute Agent turn (intelligent task)
         
         Args:
-            job: 任务
+            job: Task
             
         Returns:
-            执行结果 {success, summary, full_response, session_key, model, ...}
+            Execution result {success, summary, full_response, session_key, model, ...}
         """
         payload = job.payload
         if not isinstance(payload, AgentTurnPayload):
@@ -489,7 +489,7 @@ class CronService:
         
         try:
             if self.on_isolated_agent:
-                # 调用隔离Agent执行
+                # Call isolated Agent execution
                 result = await self.on_isolated_agent(job)
                 
                 logger.info(f"✅ Agent turn completed: {result.get('success')}")
@@ -512,10 +512,10 @@ class CronService:
             }
     
     def _job_to_dict(self, job: CronJob) -> Dict[str, Any]:
-        """转换Job为字典"""
+        """Convert Job to dictionary"""
         result = job.to_dict()
         
-        # 添加运行时信息
+        # Add runtime information
         if job.state.next_run_ms:
             result["nextRun"] = datetime.fromtimestamp(
                 job.state.next_run_ms / 1000, 
@@ -533,7 +533,7 @@ class CronService:
         return result
     
     def _broadcast_event(self, event: Dict[str, Any]) -> None:
-        """广播事件"""
+        """Broadcast event"""
         try:
             if self.on_event:
                 self.on_event(event)
@@ -541,12 +541,12 @@ class CronService:
             logger.error(f"Error broadcasting event: {e}", exc_info=True)
 
 
-# 全局单例
+# Global singleton
 _cron_service: Optional[CronService] = None
 
 
 def get_cron_service() -> CronService:
-    """获取全局CronService实例"""
+    """Get global CronService instance"""
     global _cron_service
     if _cron_service is None:
         _cron_service = CronService()
@@ -554,6 +554,6 @@ def get_cron_service() -> CronService:
 
 
 def set_cron_service(service: CronService) -> None:
-    """设置全局CronService实例"""
+    """Set global CronService instance"""
     global _cron_service
     _cron_service = service

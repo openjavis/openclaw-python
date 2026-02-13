@@ -583,11 +583,11 @@ class TelegramChannel(ChannelPlugin):
     async def _register_bot_commands(self):
         """Register bot commands with Telegram"""
         commands = [
-            BotCommand("start", "🚀 开始使用机器人"),
-            BotCommand("help", "📋 查看帮助信息"),
-            BotCommand("new", "🆕 开始新对话"),
-            BotCommand("status", "📊 查看状态"),
-            BotCommand("model", "🤖 切换AI模型"),
+            BotCommand("start", "🚀 Start using the bot"),
+            BotCommand("help", "📋 View help information"),
+            BotCommand("new", "🆕 Start new conversation"),
+            BotCommand("status", "📊 View status"),
+            BotCommand("model", "🤖 Switch AI model"),
         ]
         
         try:
@@ -607,8 +607,8 @@ class TelegramChannel(ChannelPlugin):
     def _get_quick_reply_keyboard(self):
         """Get quick reply keyboard with common commands"""
         keyboard = [
-            [KeyboardButton("💬 新对话"), KeyboardButton("📊 状态")],
-            [KeyboardButton("❓ 帮助"), KeyboardButton("🤖 切换模型")],
+            [KeyboardButton("💬 New Chat"), KeyboardButton("📊 Status")],
+            [KeyboardButton("❓ Help"), KeyboardButton("🤖 Switch Model")],
         ]
         return ReplyKeyboardMarkup(
             keyboard, 
@@ -619,13 +619,13 @@ class TelegramChannel(ChannelPlugin):
     async def _handle_start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
         welcome_message = (
-            "👋 *欢迎使用 OpenClaw AI 助手！*\n\n"
-            "我是一个强大的 AI 助手，可以帮你：\n"
-            "• 💬 智能对话交流\n"
-            "• 📝 处理文档和文件\n"
-            "• 🔍 搜索和查询信息\n"
-            "• 🛠️ 执行各种任务\n\n"
-            "发送任何消息开始对话，或使用 /help 查看更多命令。"
+            "👋 *Welcome to OpenClaw AI Assistant!*\n\n"
+            "I am a powerful AI assistant that can help you:\n"
+            "• 💬 Intelligent conversation\n"
+            "• 📝 Process documents and files\n"
+            "• 🔍 Search and query information\n"
+            "• 🛠️ Execute various tasks\n\n"
+            "Send any message to start a conversation, or use /help to see more commands."
         )
         
         # Send welcome message with quick reply keyboard
@@ -638,17 +638,17 @@ class TelegramChannel(ChannelPlugin):
     async def _handle_help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
         help_message = (
-            "📋 *可用命令*\n\n"
-            "/start - 显示欢迎信息\n"
-            "/help - 显示此帮助信息\n"
-            "/new - 开始新对话（清除历史）\n"
-            "/status - 查看机器人状态\n"
-            "/model - 切换 AI 模型\n\n"
-            "*💡 提示*\n"
-            "• 直接发送消息开始对话\n"
-            "• 支持发送图片、文件等\n"
-            "• 可以进行多轮对话\n\n"
-            "_需要帮助？请访问文档或联系支持团队。_"
+            "📋 *Available Commands*\n\n"
+            "/start - Show welcome message\n"
+            "/help - Show this help information\n"
+            "/new - Start new conversation (clear history)\n"
+            "/status - View bot status\n"
+            "/model - Switch AI model\n\n"
+            "*💡 Tips*\n"
+            "• Send messages directly to start conversation\n"
+            "• Supports images, files, etc.\n"
+            "• Multi-turn conversation supported\n\n"
+            "_Need help? Visit documentation or contact support team._"
         )
         
         await update.message.reply_text(
@@ -663,16 +663,16 @@ class TelegramChannel(ChannelPlugin):
         # Create inline keyboard for confirmation
         keyboard = [
             [
-                InlineKeyboardButton("✅ 确认", callback_data="new_confirm"),
-                InlineKeyboardButton("❌ 取消", callback_data="new_cancel")
+                InlineKeyboardButton("✅ Confirm", callback_data="new_confirm"),
+                InlineKeyboardButton("❌ Cancel", callback_data="new_cancel")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
-            "🆕 *开始新对话*\n\n"
-            "这将清除当前对话历史记录。\n"
-            "你确定要继续吗？",
+            "🆕 *Start New Conversation*\n\n"
+            "This will clear the current conversation history.\n"
+            "Are you sure you want to continue?",
             parse_mode="Markdown",
             reply_markup=reply_markup
         )
@@ -683,12 +683,12 @@ class TelegramChannel(ChannelPlugin):
         current_model = self._config.get("model", "google/gemini-3-pro-preview") if self._config else "unknown"
         
         status_message = (
-            "📊 *机器人状态*\n\n"
-            f"🤖 当前模型: `{current_model}`\n"
-            f"✅ 状态: 运行中\n"
-            f"💬 会话: 活跃\n"
-            f"📡 连接: 正常\n\n"
-            "_系统运行正常_"
+            "📊 *Bot Status*\n\n"
+            f"🤖 Current Model: `{current_model}`\n"
+            f"✅ Status: Running\n"
+            f"💬 Session: Active\n"
+            f"📡 Connection: Normal\n\n"
+            "_System running normally_"
         )
         
         await update.message.reply_text(
@@ -701,7 +701,7 @@ class TelegramChannel(ChannelPlugin):
         current_model = self._config.get("model", "google/gemini-3-pro-preview") if self._config else "unknown"
         
         keyboard = [
-            [InlineKeyboardButton("🌟 Gemini Pro (当前)", callback_data="model_gemini")],
+            [InlineKeyboardButton("🌟 Gemini Pro (Current)", callback_data="model_gemini")],
             [InlineKeyboardButton("🧠 Claude Sonnet", callback_data="model_claude")],
             [InlineKeyboardButton("⚡ GPT-4", callback_data="model_gpt4")],
             [InlineKeyboardButton("🔥 GPT-4 Turbo", callback_data="model_gpt4turbo")],
@@ -709,9 +709,9 @@ class TelegramChannel(ChannelPlugin):
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
-            f"🤖 *选择 AI 模型*\n\n"
-            f"当前模型: `{current_model}`\n\n"
-            f"选择要使用的模型：",
+            f"🤖 *Select AI Model*\n\n"
+            f"Current Model: `{current_model}`\n\n"
+            f"Choose the model to use:",
             parse_mode="Markdown",
             reply_markup=reply_markup
         )
@@ -727,14 +727,14 @@ class TelegramChannel(ChannelPlugin):
         if data == "new_confirm":
             # Clear conversation history (implement this in session manager)
             await query.edit_message_text(
-                "✅ *新对话已开始*\n\n"
-                "对话历史已清除。发送消息开始新的对话！",
+                "✅ *New Conversation Started*\n\n"
+                "Conversation history cleared. Send a message to start a new conversation!",
                 parse_mode="Markdown"
             )
         
         elif data == "new_cancel":
             await query.edit_message_text(
-                "❌ *已取消*\n\n继续当前对话。",
+                "❌ *Cancelled*\n\nContinuing current conversation.",
                 parse_mode="Markdown"
             )
         
@@ -754,9 +754,9 @@ class TelegramChannel(ChannelPlugin):
                     self._config["model"] = model_id
                 
                 await query.edit_message_text(
-                    f"✅ *模型已切换*\n\n"
-                    f"现在使用: {display_name}\n"
-                    f"模型ID: `{model_id}`\n\n"
-                    f"_新消息将使用此模型_",
+                    f"✅ *Model Switched*\n\n"
+                    f"Now using: {display_name}\n"
+                    f"Model ID: `{model_id}`\n\n"
+                    f"_New messages will use this model_",
                     parse_mode="Markdown"
                 )
