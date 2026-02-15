@@ -24,6 +24,7 @@ from .nodes import NodesTool
 from .patch import ApplyPatchTool
 from .process import ProcessTool
 from .sessions import SessionsHistoryTool, SessionsListTool, SessionsSendTool, SessionsSpawnTool
+from .session_status import SESSION_STATUS_TOOL
 from .tts import TTSTool
 from .voice_call import VoiceCallTool
 from .web import WebFetchTool, WebSearchTool
@@ -78,6 +79,9 @@ class ToolRegistry:
             self.register(SessionsHistoryTool(self._session_manager))
             self.register(SessionsSendTool(self._session_manager))
             self.register(SessionsSpawnTool(self._session_manager))
+        
+        # Session status tool (always available)
+        self.register(SESSION_STATUS_TOOL)
 
         # Advanced tools
         self.register(BrowserTool())

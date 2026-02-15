@@ -445,6 +445,99 @@ class LegacyAgentTool:
 AgentTool = LegacyAgentTool
 ToolResult = LegacyToolResult  # Old tools use LegacyToolResult
 
+def format_tool_result(
+    result: Any,
+    format: str = "markdown"
+) -> str:
+    """
+    Format tool result for display
+    
+    Matches openclaw/src/agents/tools/tool-result-format.ts
+    
+    Args:
+        result: Tool result (dict, AgentToolResult, or any value)
+        format: Output format ("markdown" or "plain")
+        
+    Returns:
+        Formatted result string
+    """
+    # Handle None
+    if result is None:
+        return ""
+    
+    # Handle AgentToolResult
+    if hasattr(result, 'content'):
+        # Extract text from Content list
+        if isinstance(result.content, list):
+            texts = []
+            for item in result.content:
+                if hasattr(item, 'text'):
+                    texts.append(item.text)
+                elif isinstance(item, dict) and 'text' in item:
+                    texts.append(item['text'])
+            return "\n".join(texts)
+        return str(result.content)
+    
+    # Handle dict
+    if isinstance(result, dict):
+        # Error case
+        if "error" in result:
+            error_text = result["error"]
+            if format == "markdown":
+                return f"❌ **Error**: {error_text}"
+            return f"Error: {error_text}"
+        
+        # Content field
+        if "content" in result:
+            return str(result["content"])
+        
+        # Format as markdown table
+        if format == "markdown":
+            lines = []
+            for key, value in result.items():
+                if key not in ["success", "metadata"]:
+                    lines.append(f"- **{key}**: {value}")
+            return "\n".join(lines) if lines else str(result)
+        else:
+            # Plain text format
+            return "\n".join(f"{k}: {v}" for k, v in result.items() if k not in ["success", "metadata"])
+    
+    # Default: convert to string
+    return str(result)
+
+
+def format_tool_error(error: Exception | str) -> str:
+    """
+    Format tool execution error
+    
+    Args:
+        error: Error exception or message
+        
+    Returns:
+        Formatted error message
+    """
+    if isinstance(error, Exception):
+        return f"❌ {error.__class__.__name__}: {str(error)}"
+    return f"❌ Error: {error}"
+
+
+def summarize_tool_result(result: Any, max_length: int = 200) -> str:
+    """
+    Summarize tool result for logging
+    
+    Args:
+        result: Tool result
+        max_length: Maximum length
+        
+    Returns:
+        Summarized result
+    """
+    formatted = format_tool_result(result, format="plain")
+    if len(formatted) > max_length:
+        return formatted[:max_length] + "..."
+    return formatted
+
+
 __all__ = [
     "AgentToolBase",
     "LegacyAgentTool",
@@ -454,4 +547,7 @@ __all__ = [
     "ToolResult",
     "SimpleTool",
     "validate_tool_parameters",
+    "format_tool_result",
+    "format_tool_error",
+    "summarize_tool_result",
 ]

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from openclaw.agents.session_ids import generate_session_id, looks_like_session_id
+from openclaw.agents.session_entry import SessionEntry, SessionStore
 from openclaw.routing.session_key import (
     build_agent_main_session_key,
     build_agent_peer_session_key,
@@ -21,6 +23,9 @@ from openclaw.routing.session_key import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Cache TTL in seconds (matches TypeScript 45s)
+SESSION_STORE_CACHE_TTL = 45.0
 
 
 class Message(BaseModel):
@@ -57,6 +62,7 @@ class Session(BaseModel):
 
     session_id: str
     workspace_dir: Path
+    session_key: str | None = None  # Optional session key for reference
     messages: list[Message] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -64,25 +70,67 @@ class Session(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
-    def __init__(self, session_id: str, workspace_dir: Path, **kwargs):
-        """Initialize session, loading from disk if exists"""
-        super().__init__(session_id=session_id, workspace_dir=workspace_dir, **kwargs)
-
+    def __init__(
+        self,
+        session_id: str,
+        workspace_dir: Path,
+        session_key: str | None = None,
+        **kwargs
+    ):
+        """
+        Initialize session with UUID.
+        
+        Args:
+            session_id: Session UUID (NOT session key)
+            workspace_dir: Workspace directory
+            session_key: Optional session key for reference (e.g., "agent:main:telegram:dm:123")
+        """
+        super().__init__(session_id=session_id, workspace_dir=workspace_dir, session_key=session_key, **kwargs)
+        
+        # Validate UUID format
+        import uuid as uuid_module
+        try:
+            uuid_module.UUID(session_id)
+        except ValueError:
+            logger.warning(f"session_id is not a valid UUID: {session_id}")
+        
         # Create sessions directory
         self._sessions_dir.mkdir(parents=True, exist_ok=True)
-
+        
         # Load existing session if exists
         if self._session_file.exists() and not self.messages:
             self._load()
 
     @property
     def _sessions_dir(self) -> Path:
-        """Get sessions directory"""
-        return self.workspace_dir / ".sessions"
+        """
+        Get sessions directory using OpenClaw standard path.
+        
+        Uses ~/.openclaw/agents/{agentId}/sessions/ format
+        """
+        home = Path.home()
+        openclaw_home = home / ".openclaw"
+        
+        # Extract agent ID from session_key if available, else use "main"
+        agent_id = "main"
+        if hasattr(self, 'session_key') and self.session_key:
+            from openclaw.routing.session_key import parse_agent_session_key
+            parsed = parse_agent_session_key(self.session_key)
+            if parsed and parsed.agent_id:
+                agent_id = parsed.agent_id
+        
+        sessions_dir = openclaw_home / "agents" / agent_id / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        
+        return sessions_dir
 
     @property
     def _session_file(self) -> Path:
-        """Get session file path"""
+        """
+        Get session file path using UUID.
+        
+        Format: ~/.openclaw/agents/{agentId}/sessions/{uuid}.json
+        """
         return self._sessions_dir / f"{self.session_id}.json"
 
     def add_message(self, role: str, content: str, **kwargs) -> Message:
@@ -194,39 +242,258 @@ class SessionManager:
         Initialize session manager
 
         Args:
-            workspace_dir: Base directory for session storage
+            workspace_dir: Base directory for session storage (legacy, still used for fallback)
             agent_id: Agent identifier (default: "main")
         """
         self.workspace_dir = Path(workspace_dir)
         self.agent_id = normalize_agent_id(agent_id)
         self._sessions: dict[str, Session] = {}
 
-        # Create workspace directory
+        # Create workspace directory (legacy)
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         
-        # Session key to session ID mapping
-        sessions_dir = self.workspace_dir / ".sessions"
-        sessions_dir.mkdir(parents=True, exist_ok=True)
-        self._session_map_file = sessions_dir / "session_map.json"
-        self._session_map: dict[str, str] = self._load_session_map()
-
-    def _load_session_map(self) -> dict[str, str]:
-        """Load session key -> session ID mapping."""
-        if self._session_map_file.exists():
-            try:
-                with open(self._session_map_file) as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.warning(f"Failed to load session map: {e}")
-        return {}
+        # New OpenClaw standard path: ~/.openclaw/agents/{agentId}/sessions/
+        openclaw_home = Path.home() / ".openclaw"
+        self._sessions_dir = openclaw_home / "agents" / self.agent_id / "sessions"
+        self._sessions_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Support both old (session_map.json) and new (sessions.json) formats
+        self._sessions_file = self._sessions_dir / "sessions.json"
+        self._legacy_session_map_file = self._sessions_dir / "session_map.json"
+        
+        # Also check old workspace location for migration
+        self._legacy_sessions_dir = self.workspace_dir / ".sessions"
+        self._legacy_sessions_file = self._legacy_sessions_dir / "sessions.json"
+        self._legacy_legacy_map_file = self._legacy_sessions_dir / "session_map.json"
+        
+        # Session store caching with mtime-based invalidation
+        self._session_store: SessionStore | None = None
+        self._session_store_loaded_at: float = 0.0
+        self._session_store_file_mtime: float | None = None
+        
+        # Lock file for concurrent access protection
+        self._lock_file = self._sessions_file.with_suffix(".json.lock")
+        
+        # Load initial session store
+        self._session_store = self._load_session_store()
     
-    def _save_session_map(self):
-        """Save session key -> session ID mapping."""
+    @property
+    def sessions_dir(self) -> Path:
+        """Public accessor for sessions directory"""
+        return self._sessions_dir
+    
+    def _acquire_lock(self, timeout: float = 10.0) -> bool:
+        """
+        Acquire file lock for session store access.
+        
+        Args:
+            timeout: Maximum time to wait for lock (seconds)
+            
+        Returns:
+            True if lock acquired
+        """
+        start_time = time.time()
+        
+        while True:
+            try:
+                # Try to create lock file exclusively
+                self._lock_file.touch(exist_ok=False)
+                logger.debug("Acquired session store lock")
+                return True
+            except FileExistsError:
+                # Lock file exists - check if it's stale (>30s old)
+                try:
+                    lock_age = time.time() - self._lock_file.stat().st_mtime
+                    if lock_age > 30.0:
+                        # Stale lock - remove and retry
+                        logger.warning(f"Removing stale lock file (age={lock_age:.1f}s)")
+                        self._lock_file.unlink(missing_ok=True)
+                        continue
+                except FileNotFoundError:
+                    # Lock was removed between check and stat
+                    continue
+                
+                # Check timeout
+                if time.time() - start_time > timeout:
+                    logger.error(f"Failed to acquire lock after {timeout}s")
+                    return False
+                
+                # Wait and retry
+                time.sleep(0.1)
+    
+    def _release_lock(self) -> None:
+        """Release file lock."""
         try:
-            with open(self._session_map_file, "w") as f:
-                json.dump(self._session_map, f, indent=2)
+            self._lock_file.unlink(missing_ok=True)
+            logger.debug("Released session store lock")
         except Exception as e:
-            logger.error(f"Failed to save session map: {e}")
+            logger.warning(f"Failed to release lock: {e}")
+    
+    def _is_cache_valid(self) -> bool:
+        """
+        Check if cached session store is still valid.
+        
+        Validates based on:
+        1. Time since last load (45s TTL)
+        2. File modification time
+        
+        Returns:
+            True if cache is valid
+        """
+        if self._session_store is None:
+            return False
+        
+        # Check TTL
+        age = time.time() - self._session_store_loaded_at
+        if age > SESSION_STORE_CACHE_TTL:
+            logger.debug(f"Cache expired (age={age:.1f}s > TTL={SESSION_STORE_CACHE_TTL}s)")
+            return False
+        
+        # Check file mtime
+        if self._sessions_file.exists():
+            try:
+                current_mtime = self._sessions_file.stat().st_mtime
+                if self._session_store_file_mtime is None or current_mtime != self._session_store_file_mtime:
+                    logger.debug("Cache invalidated by file modification")
+                    return False
+            except OSError as e:
+                logger.warning(f"Failed to check file mtime: {e}")
+                return False
+        
+        return True
+    
+    def _get_session_store(self) -> SessionStore:
+        """
+        Get session store with caching.
+        
+        Returns:
+            SessionStore instance
+        """
+        # Check cache validity
+        if self._is_cache_valid():
+            return self._session_store
+        
+        # Reload from disk
+        logger.debug("Reloading session store from disk")
+        if not self._acquire_lock(timeout=10.0):
+            logger.warning("Failed to acquire lock, using stale cache")
+            return self._session_store or SessionStore(__root__={})
+        
+        try:
+            self._session_store = self._load_session_store()
+            return self._session_store
+        finally:
+            self._release_lock()
+
+    def _load_session_store(self) -> SessionStore:
+        """Load session store, migrating from legacy formats and locations if needed."""
+        # Update cache metadata
+        self._session_store_loaded_at = time.time()
+        
+        # Try loading new format from new location first
+        if self._sessions_file.exists():
+            try:
+                # Record file mtime
+                self._session_store_file_mtime = self._sessions_file.stat().st_mtime
+                
+                with open(self._sessions_file) as f:
+                    data = json.load(f)
+                logger.info(f"Loaded sessions.json from {self._sessions_file}")
+                return SessionStore.from_dict(data)
+            except Exception as e:
+                logger.warning(f"Failed to load sessions.json: {e}")
+        
+        # Check old location for sessions.json
+        if hasattr(self, '_legacy_sessions_file') and self._legacy_sessions_file.exists():
+            try:
+                logger.info(f"Migrating sessions.json from {self._legacy_sessions_file} to {self._sessions_file}")
+                with open(self._legacy_sessions_file) as f:
+                    data = json.load(f)
+                store = SessionStore.from_dict(data)
+                # Save to new location
+                self._save_session_store(store)
+                logger.info(f"Migrated sessions.json to new location")
+                return store
+            except Exception as e:
+                logger.warning(f"Failed to migrate sessions.json: {e}")
+        
+        # Fall back to legacy session_map.json format in new location
+        if self._legacy_session_map_file.exists():
+            try:
+                logger.info("Migrating from legacy session_map.json to sessions.json")
+                with open(self._legacy_session_map_file) as f:
+                    legacy_map = json.load(f)
+                
+                # Convert legacy {key: id} to {key: SessionEntry}
+                store = SessionStore(root={})
+                now = int(datetime.now(UTC).timestamp() * 1000)
+                
+                for session_key, session_id in legacy_map.items():
+                    entry = SessionEntry(
+                        sessionId=session_id,
+                        updatedAt=now,
+                    )
+                    store.set(session_key, entry)
+                
+                # Save in new format
+                self._save_session_store(store)
+                logger.info(f"Migrated {len(legacy_map)} sessions to new format")
+                
+                return store
+            except Exception as e:
+                logger.warning(f"Failed to migrate session map: {e}")
+        
+        # Fall back to legacy session_map.json in old location
+        if hasattr(self, '_legacy_legacy_map_file') and self._legacy_legacy_map_file.exists():
+            try:
+                logger.info(f"Migrating from legacy location: {self._legacy_legacy_map_file}")
+                with open(self._legacy_legacy_map_file) as f:
+                    legacy_map = json.load(f)
+                
+                # Convert legacy {key: id} to {key: SessionEntry}
+                store = SessionStore(root={})
+                now = int(datetime.now(UTC).timestamp() * 1000)
+                
+                for session_key, session_id in legacy_map.items():
+                    entry = SessionEntry(
+                        sessionId=session_id,
+                        updatedAt=now,
+                    )
+                    store.set(session_key, entry)
+                
+                # Save in new format and location
+                self._save_session_store(store)
+                logger.info(f"Migrated {len(legacy_map)} sessions from old location to new format")
+                
+                return store
+            except Exception as e:
+                logger.warning(f"Failed to migrate from old location: {e}")
+        
+        # Return empty store
+        return SessionStore(root={})
+
+    
+    def _save_session_store(self, store: SessionStore | None = None):
+        """Save session store in new format with file locking."""
+        if store is None:
+            store = self._session_store
+        
+        if not self._acquire_lock(timeout=10.0):
+            logger.error("Failed to acquire lock for save")
+            return
+        
+        try:
+            with open(self._sessions_file, "w") as f:
+                json.dump(store.to_dict(), f, indent=2)
+            
+            # Update cache metadata
+            self._session_store_loaded_at = time.time()
+            self._session_store_file_mtime = self._sessions_file.stat().st_mtime
+            logger.debug("Saved session store")
+        except Exception as e:
+            logger.error(f"Failed to save session store: {e}")
+        finally:
+            self._release_lock()
 
     def generate_session_id(self) -> str:
         """Generate a new UUID v4 session ID."""
@@ -271,26 +538,60 @@ class SessionManager:
         elif session_key is None and session_id is None:
             session_key = build_agent_main_session_key(self.agent_id)
         
-        # Look up or create session ID
-        if session_key and session_key in self._session_map:
-            session_id = self._session_map[session_key]
+        # Look up or create session ID using SessionStore (with caching)
+        store = self._get_session_store()
+        logger.info(f"get_or_create_session: session_key={session_key}, existing_keys={list(store.keys())}")
+        
+        entry = store.get(session_key) if session_key else None
+        
+        if entry:
+            session_id = entry.sessionId
+            logger.info(f"Found existing session: {session_key} -> {session_id}")
+            # Update timestamp
+            entry.updatedAt = int(datetime.now(UTC).timestamp() * 1000)
+            self._save_session_store()
         else:
             # Generate new session ID if not provided or invalid
             if session_id is None or not self.validate_session_id(session_id):
                 session_id = self.generate_session_id()
             
-            # Store mapping if we have a session key
+            # Create new SessionEntry
             if session_key:
-                self._session_map[session_key] = session_id
-                self._save_session_map()
-                logger.info(f"Created new session: {session_key} -> {session_id}")
+                now = int(datetime.now(UTC).timestamp() * 1000)
+                entry = SessionEntry(
+                    sessionId=session_id,
+                    updatedAt=now,
+                )
+                store.set(session_key, entry)
+                self._session_store = store  # Update cache
+                self._save_session_store()
+                logger.info(f"Created NEW session: {session_key} -> {session_id}, store now has {len(store.keys())} keys")
         
         # Get or create session instance
         if session_id not in self._sessions:
-            self._sessions[session_id] = Session(session_id, self.workspace_dir)
+            self._sessions[session_id] = Session(
+                session_id,
+                self.workspace_dir,
+                session_key=session_key  # Pass session_key for reference
+            )
         
         return self._sessions[session_id]
 
+    def get_or_create_session_by_key(self, session_key: str) -> Session:
+        """
+        Get or create session using session key (simpler wrapper).
+        
+        This method queries the session store for the UUID associated with the key,
+        creates a new UUID if the key doesn't exist, and returns the Session object.
+        
+        Args:
+            session_key: Session key (e.g., "agent:main:telegram:dm:8366053063")
+            
+        Returns:
+            Session instance using UUID
+        """
+        return self.get_or_create_session(session_key=session_key)
+    
     def get_session(self, session_id: str) -> Session:
         """
         Get or create a session (legacy method)
@@ -325,18 +626,18 @@ class SessionManager:
     
     def get_session_key_for_id(self, session_id: str) -> str | None:
         """Get session key for given session ID."""
-        for key, sid in self._session_map.items():
-            if sid == session_id:
+        for key, entry in self._session_store.items():
+            if entry.sessionId == session_id:
                 return key
         return None
     
     def list_sessions_by_channel(self, channel: str) -> dict[str, str]:
         """List all sessions for a specific channel."""
         sessions = {}
-        for key, sid in self._session_map.items():
+        for key, entry in self._session_store.items():
             parsed = parse_agent_session_key(key)
             if parsed and channel in parsed.rest:
-                sessions[key] = sid
+                sessions[key] = entry.sessionId
         return sessions
 
     def delete_session(self, session_id: str) -> bool:
@@ -354,12 +655,12 @@ class SessionManager:
             del self._sessions[session_id]
 
         # Remove from session map
-        keys_to_remove = [k for k, v in self._session_map.items() if v == session_id]
+        keys_to_remove = [k for k, entry in self._session_store.items() if entry.sessionId == session_id]
         for key in keys_to_remove:
-            del self._session_map[key]
+            self._session_store.delete(key)
         
         if keys_to_remove:
-            self._save_session_map()
+            self._save_session_store()
             logger.info(f"Removed {len(keys_to_remove)} session key(s) for {session_id}")
 
         # Remove from disk

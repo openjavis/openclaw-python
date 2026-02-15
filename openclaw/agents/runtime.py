@@ -15,6 +15,7 @@ from .context import ContextManager
 from .errors import classify_error, format_error_message, is_retryable_error
 from .failover import FailoverReason, FallbackChain, FallbackManager
 from .formatting import FormatMode, ToolFormatter
+from .history_utils import sanitize_session_history, limit_history_turns
 from .providers import (
     AnthropicProvider,
     BedrockProvider,
@@ -27,6 +28,7 @@ from .providers import (
 from .queuing import QueueManager
 from .session import Session
 from .thinking import ThinkingExtractor, ThinkingMode
+from .tool_adapter import ToolDefinitionAdapter
 from .tools.base import AgentTool
 
 logger = logging.getLogger(__name__)
@@ -509,26 +511,51 @@ class MultiProviderRuntime:
                 # Convert session messages to LLM format
                 # CRITICAL: Only attach images to the LAST message (current turn)
                 # IMPORTANT: Limit history to prevent context overflow
-                MAX_HISTORY_MESSAGES = 20  # Keep last 20 messages (10 turns)
                 
                 all_messages = session.get_messages()
                 
-                # If too many messages, keep system message + recent history
-                if len(all_messages) > MAX_HISTORY_MESSAGES:
-                    # Separate system messages from conversation
-                    system_msgs = [m for m in all_messages if m.role == "system"]
-                    conversation_msgs = [m for m in all_messages if m.role != "system"]
-                    
-                    # Keep only recent conversation
-                    recent_conversation = conversation_msgs[-MAX_HISTORY_MESSAGES:]
-                    messages_to_send = system_msgs + recent_conversation
-                    
-                    logger.warning(
-                        f"⚠️ Context too long! Truncating from {len(all_messages)} to {len(messages_to_send)} messages "
-                        f"(keeping {len(system_msgs)} system + {len(recent_conversation)} recent)"
+                # Phase 1: Sanitize history (remove invalid messages)
+                # Convert to dict format for sanitization
+                messages_dict = [
+                    {
+                        "role": m.role,
+                        "content": m.content,
+                        "tool_calls": getattr(m, 'tool_calls', None),
+                        "tool_call_id": getattr(m, 'tool_call_id', None),
+                        "name": getattr(m, 'name', None),
+                    }
+                    for m in all_messages
+                ]
+                sanitized_dict = sanitize_session_history(messages_dict)
+                
+                # Phase 2: Limit history turns (keep only recent N turns)
+                # This prevents sending hundreds of old messages to the model
+                max_turns = self.extra_params.get('max_history_turns', 50)  # Default 50 turns
+                limited_dict = limit_history_turns(
+                    sanitized_dict, 
+                    max_turns=max_turns,
+                    provider=self.provider_name
+                )
+                logger.info(f"🔄 Limited history: {len(sanitized_dict)} -> {len(limited_dict)} messages (max {max_turns} turns)")
+                
+                # Convert back to Message objects
+                from .session import Message
+                messages_to_send = [
+                    Message(
+                        role=m["role"],
+                        content=m["content"],
+                        tool_calls=m.get("tool_calls"),
+                        tool_call_id=m.get("tool_call_id"),
+                        name=m.get("name"),
                     )
-                else:
-                    messages_to_send = all_messages
+                    for m in limited_dict
+                ]
+                
+                if len(messages_to_send) < len(all_messages):
+                    logger.info(
+                        f"📊 History processed: {len(all_messages)} -> {len(messages_to_send)} messages "
+                        f"(sanitized + limited for {self.provider_name})"
+                    )
                 
                 # Apply transformContext hook (openclaw-ts alignment)
                 # Allows pruning, filtering, or modifying messages before conversion
@@ -629,20 +656,40 @@ class MultiProviderRuntime:
                     if len(llm_messages) > 4:
                         logger.info(f"  ... ({len(llm_messages) - 4} more messages) ...")
 
-                # Format tools for provider
+                # Format tools for provider (with adapter for error handling)
                 tools_param = None
                 if tools:
+                    # Convert tools to dict format for adapter
+                    tools_dict = [
+                        {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.get_schema(),
+                            "execute": tool.execute if hasattr(tool, 'execute') else None,
+                        }
+                        for tool in tools
+                    ]
+                    
+                    logger.info(f"🔧 Preparing {len(tools_dict)} tools for LLM")
+                    
+                    # Apply tool adapter for standardization and error handling
+                    adapted_tools = ToolDefinitionAdapter.to_tool_definitions(tools_dict)
+                    
+                    # Format for provider API
                     tools_param = [
                         {
                             "type": "function",
                             "function": {
-                                "name": tool.name,
-                                "description": tool.description,
-                                "parameters": tool.get_schema(),
+                                "name": t["name"],
+                                "description": t.get("description", ""),
+                                "parameters": t.get("parameters", {}),
                             },
                         }
-                        for tool in tools
+                        for t in adapted_tools
                     ]
+                    
+                    logger.info(f"🔧 Formatted {len(tools_param)} tools for provider API")
+                    logger.info(f"🔧 Tool names: {[t['function']['name'] for t in tools_param]}")
 
                 # Stream from provider (may need multiple rounds for tool calling)
                 accumulated_text = ""
@@ -659,6 +706,11 @@ class MultiProviderRuntime:
                 ):
                     if response.type == "text_delta":
                         text = response.content
+                        
+                        # Filter out empty text deltas
+                        if not text:
+                            continue
+                        
                         accumulated_text += text
 
                         # Extract thinking if enabled
@@ -969,11 +1021,12 @@ class MultiProviderRuntime:
                         # If there were tool calls, we need to continue the conversation
                         # to let the model generate a response based on tool results
                         if tool_calls:
-                            logger.info(f"Tool calls completed, will request final response from model")
+                            logger.info(f"🔧 Tool calls completed ({len(tool_calls)} calls), will request final response from model")
                             needs_tool_response = True
                             # Store the initial text and tool_calls for later merging
                             initial_text = final_text
                             initial_tool_calls = tool_calls
+                            logger.info(f"📌 Set needs_tool_response=True, initial_tool_calls={len(initial_tool_calls)}")
                             # Don't add assistant message yet - wait for final response
                             # Don't break yet - we'll make another API call after this loop
                         else:
@@ -994,21 +1047,41 @@ class MultiProviderRuntime:
                         raise Exception(response.content)
 
                 # If we need to get a response after tool execution, make another API call
+                logger.info(f"🔍 Checking needs_tool_response: {needs_tool_response}")
                 if needs_tool_response:
-                    logger.info("Making follow-up API call to get response based on tool results")
+                    logger.info("📞 Making follow-up API call to get response based on tool results")
                     
                     # Rebuild messages with tool results
+                    # CRITICAL: Apply same history limiting as initial call
+                    followup_all_messages = session.get_messages()
+                    followup_messages_dict = [
+                        {
+                            "role": m.role,
+                            "content": m.content,
+                            "tool_calls": getattr(m, 'tool_calls', None),
+                            "tool_call_id": getattr(m, 'tool_call_id', None),
+                            "name": getattr(m, 'name', None),
+                        }
+                        for m in followup_all_messages
+                    ]
+                    followup_sanitized = sanitize_session_history(followup_messages_dict)
+                    followup_limited = limit_history_turns(
+                        followup_sanitized,
+                        max_turns=max_turns,
+                        provider=self.provider_name
+                    )
+                    logger.info(f"🔄 Follow-up limited history: {len(followup_all_messages)} -> {len(followup_limited)} messages")
+                    
+                    # Convert to LLM messages
                     llm_messages = []
-                    for msg in session.get_messages():
-                        msg_images = getattr(msg, 'images', None)
-                        # CRITICAL FIX: Pass tool_calls, tool_call_id, and name from session messages
+                    for m in followup_limited:
                         llm_messages.append(LLMMessage(
-                            role=msg.role, 
-                            content=msg.content, 
-                            images=msg_images,
-                            tool_calls=getattr(msg, 'tool_calls', None),
-                            tool_call_id=getattr(msg, 'tool_call_id', None),
-                            name=getattr(msg, 'name', None)
+                            role=m["role"],
+                            content=m["content"],
+                            images=None,  # No images in follow-up
+                            tool_calls=m.get("tool_calls"),
+                            tool_call_id=m.get("tool_call_id"),
+                            name=m.get("name")
                         ))
                     
                     # REMOVED WORKAROUND: Do NOT add extra user message
@@ -1020,17 +1093,21 @@ class MultiProviderRuntime:
                     accumulated_text = ""
                     tool_calls = []
                     
-                    # Stream the final response WITHOUT tools (to prevent infinite loop)
-                    # The model should now generate a text response based on tool results
-                    # IMPORTANT: Disable ALL tools including Google Search
-                    # Create a copy of extra_params without enable_search
-                    final_response_params = {k: v for k, v in self.extra_params.items() if k != 'enable_search'}
+                    # Stream the final response WITH tools available
+                    # The model can choose to return text or call more tools
+                    # This aligns with TypeScript openclaw behavior
+                    
+                    # Reuse the same tools_param from initial call
+                    logger.info(f"🔧 Re-using {len(tools_param) if tools_param else 0} tools for follow-up call")
+                    
+                    # Track if follow-up call triggered more tools
+                    followup_tool_calls = []
                     
                     async for response in self.provider.stream(
                         messages=llm_messages, 
-                        tools=[], 
+                        tools=tools_param,  # ✅ Pass same tool list as initial call
                         max_tokens=max_tokens,
-                        **final_response_params  # Pass params WITHOUT enable_search
+                        **self.extra_params
                     ):
                         if response.type == "text_delta":
                             text = response.content
@@ -1045,16 +1122,26 @@ class MultiProviderRuntime:
                             )
                             await self._notify_observers(event)
                             yield event
+                        
+                        elif response.type == "tool_use":
+                            # Model called another tool in follow-up (unexpected)
+                            # Log it but don't execute - this should be rare
+                            tool_call = response.content
+                            followup_tool_calls.append(tool_call)
+                            logger.warning(f"⚠️ Follow-up call unexpectedly triggered tool: {tool_call.get('name')}")
+                            logger.warning("This may indicate the model didn't understand the tool results.")
                             
                         elif response.type == "done":
-                            # CRITICAL FIX: Merge initial tool_calls with final text into ONE message
-                            # This prevents two consecutive assistant messages
-                            final_response_text = accumulated_text or ""  # Ensure never None
-                            final_tool_calls = initial_tool_calls if needs_tool_response else []
+                            # If follow-up call triggered more tools, add them to the message
+                            all_tool_calls = initial_tool_calls + followup_tool_calls
                             
-                            # Add single assistant message with both tool_calls and final text
-                            session.add_assistant_message(final_response_text, final_tool_calls)
-                            logger.debug(f"Added complete assistant message (text={len(final_response_text)} chars, tool_calls={len(final_tool_calls)})")
+                            final_response_text = accumulated_text or ""  # Ensure never None
+                            
+                            # Add assistant message with all tool calls and accumulated text
+                            if all_tool_calls or final_response_text:
+                                session.add_assistant_message(final_response_text, all_tool_calls)
+                                logger.info(f"✅ Added assistant message: text={len(final_response_text)} chars, tools={len(all_tool_calls)}")
+                            
                             break
                             
                         elif response.type == "error":

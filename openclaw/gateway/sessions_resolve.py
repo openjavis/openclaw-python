@@ -189,7 +189,7 @@ def _resolve_by_session_id(params: SessionResolveParams) -> SessionResolveResult
             
             # Search for matching session_id
             for key, entry in store.items():
-                if entry.session_id == session_id:
+                if entry.sessionId == session_id:
                     # Apply filters
                     if _entry_matches_filters(key, entry, params):
                         matches.append((key, entry))
@@ -306,7 +306,7 @@ def _entry_matches_filters(
     
     # Spawned by filter
     if params.spawned_by is not None:
-        if entry.spawned_by != params.spawned_by:
+        if entry.spawnedBy != params.spawned_by:
             return False
     
     return True

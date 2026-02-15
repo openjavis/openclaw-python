@@ -198,6 +198,7 @@ class ChannelManager:
                 format_bootstrap_context_string
             )
             from ..agents.system_prompt import build_agent_system_prompt
+            from ..agents.system_prompt_params import build_system_prompt_params
             
             # Load bootstrap files from workspace
             bootstrap_files = load_bootstrap_files(self.workspace_dir)
@@ -215,16 +216,31 @@ class ChannelManager:
             # Otherwise, build complete system prompt with bootstrap files
             tool_names = [tool.name for tool in self.tools] if self.tools else []
             
-            # Build complete system prompt
+            # Get model name from default_runtime if available
+            model_name = "unknown"
+            if self.default_runtime and hasattr(self.default_runtime, 'model_str'):
+                model_name = self.default_runtime.model_str
+            
+            # Get complete runtime parameters (includes timezone, runtime_info, etc.)
+            # Config is not available here, so timezone will be auto-detected
+            prompt_params = build_system_prompt_params(
+                config=None,  # Will auto-detect timezone
+                workspace_dir=self.workspace_dir,
+                runtime={
+                    "agent_id": "main",
+                    "channel": "gateway",
+                    "model": model_name,
+                    "default_model": model_name,
+                }
+            )
+            
+            # Build complete system prompt with resolved parameters
             system_prompt = build_agent_system_prompt(
                 workspace_dir=self.workspace_dir,
                 tool_names=tool_names,
                 prompt_mode="full",
-                runtime_info={
-                    "agent_id": "main",
-                    "channel": "gateway",
-                    "model": "unknown"
-                },
+                runtime_info=prompt_params["runtime_info"],  # Complete runtime info
+                user_timezone=prompt_params["user_timezone"],  # Resolved timezone
                 context_files=format_bootstrap_context([
                     bf for bf in bootstrap_files
                     if "(File" not in bf.content
@@ -232,6 +248,7 @@ class ChannelManager:
             )
             
             logger.info(f"Built system prompt with bootstrap files ({len(system_prompt)} chars)")
+            logger.info(f"Using timezone: {prompt_params['user_timezone']}")
             return system_prompt
             
         except Exception as e:
@@ -766,13 +783,27 @@ class ChannelManager:
                     build_session_key_from_context,
                 )
                 
-                # Construct MsgContext with all metadata
-                session_id = f"{channel_id}-{message.chat_id}"
+                # Build proper session key (align with TypeScript format)
+                from openclaw.routing.session_key import build_agent_peer_session_key
+                
+                # Determine peer_kind based on chat_type
+                peer_kind = "dm" if message.chat_type == "dm" else message.chat_type or "dm"
+                
+                # Build session key: agent:main:telegram:dm:8366053063
+                session_key = build_agent_peer_session_key(
+                    agent_id=self.session_manager.agent_id if self.session_manager else "main",
+                    channel=channel_id,
+                    peer_kind=peer_kind,
+                    peer_id=str(message.chat_id),
+                    dm_scope="per-channel-peer"  # Each channel+peer gets own session
+                )
+                
+                logger.info(f"[{channel_id}] Built session key: {session_key}")
                 
                 ctx = MsgContext(
                     Body=message.text or "",
                     RawBody=message.text or "",
-                    SessionKey=session_id,
+                    SessionKey=session_key,  # Use proper session key
                     From=message.sender_id,
                     To=channel_id,
                     ChatType=message.chat_type,
@@ -799,22 +830,23 @@ class ChannelManager:
                 
                 logger.debug(f"[{channel_id}] Context finalized: BodyForAgent length={len(ctx.BodyForAgent or '')}, ChatType={ctx.ChatType}")
 
-                # Get or create session
+                # Get or create session using session key (will query store for UUID)
                 session = None
                 if self.session_manager:
-                    session = self.session_manager.get_session(session_id)
-                    logger.info(f"[{channel_id}] Session created/retrieved: {session_id}")
+                    session = self.session_manager.get_or_create_session_by_key(session_key)
+                    logger.info(f"[{channel_id}] Session created/retrieved: key={session_key}, uuid={session.session_id}")
                     
                     # Resolve session workspace for file generation
                     from openclaw.agents.session_workspace import resolve_session_workspace_dir
                     session_workspace = resolve_session_workspace_dir(
                         workspace_root=session.workspace_dir if session else Path.home() / ".openclaw" / "workspace",
-                        session_key=session_id
+                        session_key=session_key
                     )
                     logger.info(f"[{channel_id}] Session workspace: {session_workspace}")
 
                 # Process through Agent Runtime
                 response_text = ""
+                has_error = False
                 logger.info(f"[{channel_id}] Starting runtime.run_turn with {len(self.tools)} tools")
 
                 # Extract images from context
@@ -884,9 +916,20 @@ class ChannelManager:
                     logger.info(f"📤 [{channel_id}] Sent response to {message.chat_id}")
                 else:
                     logger.warning(f"[{channel_id}] No response text generated")
+                    # Send user-visible notification for empty response
+                    if not has_error:
+                        try:
+                            await channel.send_text(
+                                target=message.chat_id,
+                                text="⚠️ Model returned empty response. Please try rephrasing your question or reducing context length.",
+                                reply_to=message.message_id,
+                            )
+                        except Exception as send_err:
+                            logger.error(f"Failed to send empty response notification: {send_err}")
 
             except Exception as e:
-                logger.error(f"Error processing message: {e}")
+                has_error = True
+                logger.error(f"Error processing message: {e}", exc_info=True)
                 # Optionally send error message
                 try:
                     await channel.send_text(

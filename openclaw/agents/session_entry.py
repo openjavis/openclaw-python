@@ -1,316 +1,262 @@
 """
-Session entry models matching TypeScript SessionEntry structure
+Session Entry - Complete session metadata structure (aligned with openclaw SessionEntry)
 
-This module provides complete session metadata models that align with
-openclaw TypeScript implementation.
+This module defines the SessionEntry structure that stores all session metadata
+in sessions.json, matching the TypeScript implementation.
 """
 from __future__ import annotations
 
-
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel, Field, RootModel
 
 
 class SessionOrigin(BaseModel):
-    """Session origin metadata - where the session originated from"""
-    
+    """Session origin information - tracks where the session started"""
     label: Optional[str] = None
-    provider: Optional[str] = None
+    provider: Optional[str] = None  # Legacy field (now 'channel')
+    channel: Optional[str] = None
     surface: Optional[str] = None
-    chat_type: Optional[str] = None
+    chatType: Optional[str] = None
     from_: Optional[str] = Field(None, alias="from")
     to: Optional[str] = None
-    account_id: Optional[str] = None
-    thread_id: Optional[str | int] = None
-
-    class Config:
-        populate_by_name = True
+    accountId: Optional[str] = None
+    threadId: Optional[str | int] = None
 
 
 class DeliveryContext(BaseModel):
-    """Message delivery context - where to send responses"""
-    
+    """Delivery context for outbound messages"""
     channel: Optional[str] = None
     to: Optional[str] = None
-    account_id: Optional[str] = None
-    thread_id: Optional[str | int] = None
+    accountId: Optional[str] = None
+    threadId: Optional[str | int] = None
+    replyToMessageId: Optional[str] = None
+
+
+class SessionSkillSnapshot(BaseModel):
+    """Snapshot of skills enabled for this session"""
+    enabled: dict[str, bool] = Field(default_factory=dict)
+    apiKeys: dict[str, str] = Field(default_factory=dict)
+
+
+class SessionSystemPromptReport(BaseModel):
+    """System prompt build report"""
+    builtAt: Optional[int] = None
+    sections: Optional[list[dict[str, Any]]] = None
 
 
 class SessionEntry(BaseModel):
     """
-    Complete session metadata matching TypeScript SessionEntry
+    Complete session metadata (aligned with openclaw SessionEntry)
     
-    This represents the session metadata stored in sessions.json.
-    The actual conversation messages are stored separately in .jsonl transcript files.
+    Stored in sessions.json as: {sessionKey: SessionEntry}
     """
+    # Core identity  
+    sessionId: str = Field(..., description="UUID v4 session identifier")
+    updatedAt: int = Field(default_factory=lambda: int(__import__("time").time() * 1000), description="Last update timestamp (Unix ms)")
+    sessionFile: Optional[str] = Field(None, description="Custom transcript path override")
     
-    # =========================================================================
-    # Core fields
-    # =========================================================================
+    # Parent relationship
+    spawnedBy: Optional[str] = Field(None, description="Parent session key that spawned this session")
     
-    session_id: str
-    """Unique session identifier (UUID v4)"""
+    # Token statistics
+    inputTokens: Optional[int] = Field(None, description="Total input tokens used")
+    outputTokens: Optional[int] = Field(None, description="Total output tokens generated")
+    totalTokens: Optional[int] = Field(None, description="Total tokens (input + output)")
+    contextTokens: Optional[int] = Field(None, description="Context window size in tokens")
+    compactionCount: Optional[int] = Field(0, description="Number of compactions performed")
     
-    updated_at: int
-    """Last update timestamp in milliseconds since epoch"""
+    # Model information
+    modelProvider: Optional[str] = Field(None, description="Model provider (anthropic, google, openai, etc)")
+    model: Optional[str] = Field(None, description="Model identifier")
+    providerOverride: Optional[str] = Field(None, description="User-set provider override")
+    modelOverride: Optional[str] = Field(None, description="User-set model override")
+    authProfileOverride: Optional[str] = Field(None, description="Auth profile override")
+    authProfileOverrideSource: Optional[Literal["auto", "user"]] = None
+    authProfileOverrideCompactionCount: Optional[int] = None
     
-    session_file: Optional[str] = None
-    """Relative path to transcript file (e.g., "{sessionId}.jsonl")"""
+    # Session behavior settings
+    thinkingLevel: Optional[str] = Field(None, description="Thinking verbosity level")
+    verboseLevel: Optional[str] = Field(None, description="Verbose output level")
+    reasoningLevel: Optional[str] = Field(None, description="Reasoning detail level")
+    elevatedLevel: Optional[str] = Field(None, description="Elevated privileges level")
+    chatType: Optional[str] = Field(None, description="Chat type: direct, group, channel")
     
-    spawned_by: Optional[str] = None
-    """Parent session key that spawned this session (for subagent sessions)"""
+    # TTS and exec settings
+    ttsAuto: Optional[str] = Field(None, description="TTS auto mode")
+    execHost: Optional[str] = Field(None, description="Exec host preference")
+    execSecurity: Optional[str] = Field(None, description="Exec security level")
+    execAsk: Optional[str] = Field(None, description="Exec approval mode")
+    execNode: Optional[str] = Field(None, description="Exec node target")
     
-    # =========================================================================
-    # State flags
-    # =========================================================================
+    # Response settings
+    responseUsage: Optional[Literal["on", "off", "tokens", "full"]] = Field(None, description="Usage reporting mode")
     
-    system_sent: Optional[bool] = None
-    """Whether system message was sent"""
+    # Group settings
+    groupActivation: Optional[Literal["mention", "always"]] = Field(None, description="Group activation mode")
+    groupActivationNeedsSystemIntro: Optional[bool] = None
     
-    aborted_last_run: Optional[bool] = None
-    """Whether the last run was aborted"""
+    # Send policy
+    sendPolicy: Optional[Literal["allow", "deny"]] = Field(None, description="Send policy")
     
-    # =========================================================================
-    # Chat type and channel information
-    # =========================================================================
+    # Queue settings
+    queueMode: Optional[Literal["steer", "followup", "collect", "steer-backlog", "steer+backlog", "queue", "interrupt"]] = None
+    queueDebounceMs: Optional[int] = None
+    queueCap: Optional[int] = None
+    queueDrop: Optional[Literal["old", "new", "summarize"]] = None
     
-    chat_type: Optional[str] = None
-    """Type of chat (dm, group, channel, etc.)"""
+    # Channel information
+    channel: Optional[str] = Field(None, description="Primary channel")
+    lastChannel: Optional[str] = Field(None, description="Last used channel")
+    lastTo: Optional[str] = Field(None, description="Last recipient")
+    lastAccountId: Optional[str] = Field(None, description="Last account ID")
+    lastThreadId: Optional[str | int] = Field(None, description="Last thread ID")
     
-    channel: Optional[str] = None
-    """Channel name (telegram, discord, slack, etc.)"""
+    # Display information
+    displayName: Optional[str] = Field(None, description="Display name")
+    label: Optional[str] = Field(None, description="User-set label")
     
-    group_id: Optional[str] = None
-    """Group identifier"""
+    # Group information
+    groupId: Optional[str] = Field(None, description="Group ID")
+    subject: Optional[str] = Field(None, description="Group subject/name")
+    groupChannel: Optional[str] = Field(None, description="Group channel")
+    space: Optional[str] = Field(None, description="Workspace/space")
     
-    subject: Optional[str] = None
-    """Subject or title"""
-    
-    group_channel: Optional[str] = None
-    """Group channel identifier"""
-    
-    space: Optional[str] = None
-    """Workspace or space identifier"""
-    
-    # =========================================================================
-    # Model configuration
-    # =========================================================================
-    
-    thinking_level: Optional[str] = None
-    """Thinking level (low, medium, high, xhigh)"""
-    
-    verbose_level: Optional[str] = None
-    """Verbose level"""
-    
-    reasoning_level: Optional[str] = None
-    """Reasoning level"""
-    
-    elevated_level: Optional[str] = None
-    """Elevated level"""
-    
-    tts_auto: Optional[str] = None
-    """Text-to-speech auto mode"""
-    
-    provider_override: Optional[str] = None
-    """Provider override (anthropic, openai, etc.)"""
-    
-    model_override: Optional[str] = None
-    """Model override (claude-3-5-sonnet, gpt-4, etc.)"""
-    
-    auth_profile_override: Optional[str] = None
-    """Auth profile override"""
-    
-    auth_profile_override_source: Optional[Literal["auto", "user"]] = None
-    """Source of auth profile override"""
-    
-    auth_profile_override_compaction_count: Optional[int] = None
-    """Compaction count when auth profile was overridden"""
-    
-    # =========================================================================
-    # Execution environment
-    # =========================================================================
-    
-    exec_host: Optional[str] = None
-    """Execution host"""
-    
-    exec_security: Optional[str] = None
-    """Execution security level"""
-    
-    exec_ask: Optional[str] = None
-    """Execution ask mode"""
-    
-    exec_node: Optional[str] = None
-    """Execution node"""
-    
-    # =========================================================================
-    # Behavior configuration
-    # =========================================================================
-    
-    response_usage: Optional[Literal["on", "off", "tokens", "full"]] = None
-    """Response usage display mode"""
-    
-    send_policy: Optional[Literal["allow", "deny"]] = None
-    """Send policy for outbound messages"""
-    
-    group_activation: Optional[Literal["mention", "always"]] = None
-    """Group activation mode"""
-    
-    group_activation_needs_system_intro: Optional[bool] = None
-    """Whether group activation needs system intro"""
-    
-    queue_mode: Optional[str] = None
-    """Queue mode (steer, followup, collect, queue, interrupt, etc.)"""
-    
-    queue_debounce_ms: Optional[int] = None
-    """Queue debounce milliseconds"""
-    
-    queue_cap: Optional[int] = None
-    """Queue capacity limit"""
-    
-    queue_drop: Optional[Literal["old", "new", "summarize"]] = None
-    """Queue drop strategy when capacity is exceeded"""
-    
-    # =========================================================================
-    # Token tracking
-    # =========================================================================
-    
-    input_tokens: Optional[int] = None
-    """Total input tokens consumed"""
-    
-    output_tokens: Optional[int] = None
-    """Total output tokens generated"""
-    
-    total_tokens: Optional[int] = None
-    """Total tokens (input + output)"""
-    
-    model_provider: Optional[str] = None
-    """Current model provider"""
-    
-    model: Optional[str] = None
-    """Current model"""
-    
-    context_tokens: Optional[int] = None
-    """Context window size in tokens"""
-    
-    # =========================================================================
-    # Compaction and memory management
-    # =========================================================================
-    
-    compaction_count: Optional[int] = None
-    """Number of times transcript has been compacted"""
-    
-    memory_flush_at: Optional[int] = None
-    """Timestamp when memory should be flushed"""
-    
-    memory_flush_compaction_count: Optional[int] = None
-    """Compaction count at last memory flush"""
-    
-    # =========================================================================
-    # CLI sessions
-    # =========================================================================
-    
-    cli_session_ids: Optional[dict[str, str]] = None
-    """CLI session IDs mapping"""
-    
-    claude_cli_session_id: Optional[str] = None
-    """Claude CLI session ID"""
-    
-    # =========================================================================
-    # Labels and display
-    # =========================================================================
-    
-    label: Optional[str] = None
-    """User-defined label (max 64 chars, unique per store)"""
-    
-    display_name: Optional[str] = None
-    """Display name for UI"""
-    
-    # =========================================================================
     # Origin and delivery
-    # =========================================================================
+    origin: Optional[SessionOrigin] = Field(None, description="Session origin info")
+    deliveryContext: Optional[DeliveryContext] = Field(None, description="Default delivery context")
     
-    origin: Optional[SessionOrigin] = None
-    """Session origin metadata"""
+    # Memory management
+    memoryFlushAt: Optional[int] = Field(None, description="Timestamp when memory was flushed")
+    memoryFlushCompactionCount: Optional[int] = Field(None, description="Compaction count at memory flush")
     
-    delivery_context: Optional[DeliveryContext] = None
-    """Message delivery context"""
+    # Skills and system prompt
+    skillsSnapshot: Optional[SessionSkillSnapshot] = Field(None, description="Skills snapshot")
+    systemPromptReport: Optional[SessionSystemPromptReport] = Field(None, description="System prompt report")
     
-    last_channel: Optional[str] = None
-    """Last channel used"""
+    # CLI session IDs
+    cliSessionIds: Optional[dict[str, str]] = Field(None, description="CLI tool session IDs")
+    claudeCliSessionId: Optional[str] = Field(None, description="Claude CLI session ID")
     
-    last_to: Optional[str] = None
-    """Last recipient"""
+    # Flags
+    systemSent: Optional[bool] = Field(None, description="System message sent flag")
+    abortedLastRun: Optional[bool] = Field(None, description="Last run aborted flag")
     
-    last_account_id: Optional[str] = None
-    """Last account ID"""
+    # Heartbeat deduplication
+    lastHeartbeatText: Optional[str] = Field(None, description="Last heartbeat text for deduplication")
+    lastHeartbeatSentAt: Optional[int] = Field(None, description="Last heartbeat timestamp (ms)")
     
-    last_thread_id: Optional[str | int] = None
-    """Last thread ID"""
-    
-    # =========================================================================
-    # Heartbeat
-    # =========================================================================
-    
-    last_heartbeat_text: Optional[str] = None
-    """Last delivered heartbeat payload"""
-    
-    last_heartbeat_sent_at: Optional[int] = None
-    """Timestamp (ms) when lastHeartbeatText was delivered"""
-    
-    # =========================================================================
-    # Skills and system prompt snapshots
-    # =========================================================================
-    
-    skills_snapshot: Optional[dict[str, Any]] = None
-    """Skills snapshot for this session"""
-    
-    system_prompt_report: Optional[dict[str, Any]] = None
-    """System prompt report"""
-
     class Config:
         populate_by_name = True
+        # Allow both camelCase and snake_case field names
+        alias_generator = None
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SessionEntry:
+        """Create SessionEntry from dict, handling both naming conventions"""
+        # Convert snake_case keys to camelCase if needed
+        normalized_data = {}
+        for key, value in data.items():
+            # Handle session_id -> sessionId
+            if key == "session_id" and "sessionId" not in data:
+                normalized_data["sessionId"] = value
+            # Handle updated_at -> updatedAt
+            elif key == "updated_at" and "updatedAt" not in data:
+                normalized_data["updatedAt"] = value
+            else:
+                normalized_data[key] = value
+        
+        return cls(**normalized_data)
+        
+    def update_tokens(self, input_tokens: int = 0, output_tokens: int = 0) -> None:
+        """Update token statistics"""
+        self.inputTokens = (self.inputTokens or 0) + input_tokens
+        self.outputTokens = (self.outputTokens or 0) + output_tokens
+        self.totalTokens = (self.inputTokens or 0) + (self.outputTokens or 0)
+        self.updatedAt = int(__import__("time").time() * 1000)
+    
+    def update_model(self, provider: str | None = None, model: str | None = None) -> None:
+        """Update model information"""
+        if provider:
+            self.modelProvider = provider
+        if model:
+            self.model = model
+        self.updatedAt = int(__import__("time").time() * 1000)
 
 
-def merge_session_entry(
-    existing: Optional[SessionEntry],
-    patch: dict[str, Any],
-) -> SessionEntry:
+class SessionStore(RootModel[dict[str, SessionEntry]]):
     """
-    Merge a patch into an existing session entry
+    Session store structure - the complete sessions.json file
+    
+    Format: {sessionKey: SessionEntry}
+    
+    Uses Pydantic v2 RootModel for dict-based structure
+    """
+    root: dict[str, SessionEntry] = Field(default_factory=dict)
+    
+    def get(self, session_key: str) -> SessionEntry | None:
+        """Get session entry by key"""
+        return self.root.get(session_key)
+    
+    def set(self, session_key: str, entry: SessionEntry) -> None:
+        """Set session entry"""
+        self.root[session_key] = entry
+    
+    def delete(self, session_key: str) -> bool:
+        """Delete session entry"""
+        if session_key in self.root:
+            del self.root[session_key]
+            return True
+        return False
+    
+    def keys(self) -> list[str]:
+        """Get all session keys"""
+        return list(self.root.keys())
+    
+    def values(self) -> list[SessionEntry]:
+        """Get all session entries"""
+        return list(self.root.values())
+    
+    def items(self) -> list[tuple[str, SessionEntry]]:
+        """Get all key-entry pairs"""
+        return list(self.root.items())
+    
+    def to_dict(self) -> dict[str, dict[str, Any]]:
+        """Export to dict for JSON serialization"""
+        return {k: v.model_dump(exclude_none=True, by_alias=True) for k, v in self.root.items()}
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SessionStore:
+        """Load from dict"""
+        store = cls(root={})
+        for key, entry_data in data.items():
+            if isinstance(entry_data, dict):
+                # Use SessionEntry.from_dict to handle naming conventions
+                store.root[key] = SessionEntry.from_dict(entry_data)
+        return store
+
+
+def merge_session_entry(existing: SessionEntry, patch: dict[str, Any]) -> SessionEntry:
+    """
+    Merge a patch into an existing SessionEntry
     
     Args:
-        existing: Existing session entry (if any)
-        patch: Partial session entry to merge
+        existing: The existing SessionEntry
+        patch: Partial update data
         
     Returns:
-        Merged session entry
+        Updated SessionEntry with merged data
     """
-    import uuid
-    import time
+    # Convert existing entry to dict
+    existing_dict = existing.model_dump(exclude_none=True)
     
-    # Generate session_id if not provided
-    session_id = patch.get("session_id") or (existing.session_id if existing else str(uuid.uuid4()))
+    # Merge patch into existing data
+    for key, value in patch.items():
+        if value is not None:
+            existing_dict[key] = value
     
-    # Use max of existing, patch, and current time for updated_at
-    now_ms = int(time.time() * 1000)
-    updated_at = max(
-        existing.updated_at if existing else 0,
-        patch.get("updated_at", 0),
-        now_ms
-    )
+    # Update timestamp
+    existing_dict['updatedAt'] = int(__import__("time").time() * 1000)
     
-    if not existing:
-        # Create new entry from patch
-        return SessionEntry(
-            session_id=session_id,
-            updated_at=updated_at,
-            **{k: v for k, v in patch.items() if k not in ["session_id", "updated_at"]}
-        )
-    
-    # Merge existing with patch
-    existing_dict = existing.model_dump(exclude_unset=False)
-    existing_dict.update(patch)
-    existing_dict["session_id"] = session_id
-    existing_dict["updated_at"] = updated_at
-    
+    # Create new SessionEntry with merged data
     return SessionEntry(**existing_dict)

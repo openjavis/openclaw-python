@@ -113,7 +113,7 @@ class SessionsListMethod:
                         "groupChannel": row.group_channel,
                         "space": row.space,
                         "chatType": row.chat_type,
-                        "origin": row.origin,
+                        "origin": row.origin.model_dump() if hasattr(row.origin, 'model_dump') else row.origin,
                         "updatedAt": row.updated_at,
                         "sessionId": row.session_id,
                         "systemSent": row.system_sent,
@@ -130,7 +130,7 @@ class SessionsListMethod:
                         "modelProvider": row.model_provider,
                         "model": row.model,
                         "contextTokens": row.context_tokens,
-                        "deliveryContext": row.delivery_context,
+                        "deliveryContext": row.delivery_context.model_dump() if hasattr(row.delivery_context, 'model_dump') else row.delivery_context,
                         "lastChannel": row.last_channel,
                         "lastTo": row.last_to,
                         "lastAccountId": row.last_account_id,
@@ -211,15 +211,15 @@ class SessionsPreviewMethod:
                         entry = store[store_key]
                         break
                 
-                if not entry or not entry.session_id:
+                if not entry or not entry.sessionId:
                     previews.append({"key": key, "status": "missing", "items": []})
                     continue
                 
                 # Read transcript preview
                 items = read_session_preview_items(
-                    entry.session_id,
+                    entry.sessionId,
                     target.store_path,
-                    entry.session_file,
+                    entry.sessionFile,
                     limit=limit,
                     max_chars=max_chars
                 )
@@ -409,7 +409,7 @@ class SessionsResetMethod:
         store_data = load_session_store(target.store_path)
         entry = store_data.get(target.canonical_key)
         if entry:
-            old_session_id = entry.session_id
+            old_session_id = entry.sessionId
         
         def mutator(store: Dict[str, SessionEntry]) -> None:
             entry = store.get(target.canonical_key)
@@ -418,43 +418,59 @@ class SessionsResetMethod:
             if not entry:
                 logger.info(f"Session not found for reset, creating new session: {key}")
                 reset_entry = SessionEntry(
-                    session_id=new_session_id,
-                    updated_at=now_ms
+                    sessionId=new_session_id,
+                    updatedAt=now_ms
                 )
                 store[target.canonical_key] = reset_entry
                 return
             
             # Preserve configuration fields from existing session
             preserved = {
-                "thinking_level": entry.thinking_level,
-                "verbose_level": entry.verbose_level,
-                "reasoning_level": entry.reasoning_level,
-                "elevated_level": entry.elevated_level,
+                "thinking_level": entry.thinkingLevel,
+                "verbose_level": entry.verboseLevel,
+                "reasoning_level": entry.reasoningLevel,
+                "elevated_level": entry.elevatedLevel,
                 "label": entry.label,
-                "display_name": entry.display_name,
-                "provider_override": entry.provider_override,
-                "model_override": entry.model_override,
-                "exec_host": entry.exec_host,
-                "exec_security": entry.exec_security,
-                "exec_ask": entry.exec_ask,
-                "exec_node": entry.exec_node,
-                "send_policy": entry.send_policy,
-                "group_activation": entry.group_activation,
-                "response_usage": entry.response_usage,
+                "display_name": entry.displayName,
+                "provider_override": entry.providerOverride,
+                "model_override": entry.modelOverride,
+                "exec_host": entry.execHost,
+                "exec_security": entry.execSecurity,
+                "exec_ask": entry.execAsk,
+                "exec_node": entry.execNode,
+                "send_policy": entry.sendPolicy,
+                "group_activation": entry.groupActivation,
+                "response_usage": entry.responseUsage,
                 "origin": entry.origin,
-                "delivery_context": entry.delivery_context,
+                "delivery_context": entry.deliveryContext,
             }
             
             # Create new entry with reset fields
             reset_entry = SessionEntry(
-                session_id=new_session_id,
-                updated_at=now_ms,
+                sessionId=new_session_id,
+                updatedAt=now_ms,
                 **{k: v for k, v in preserved.items() if v is not None}
             )
             
             store[target.canonical_key] = reset_entry
         
         update_session_store(target.store_path, mutator)
+        
+        # CRITICAL: Invalidate cached Session object
+        # Remove old session from session_manager cache to ensure fresh load
+        try:
+            if hasattr(connection, 'gateway') and connection.gateway:
+                channel_manager = connection.gateway.channel_manager
+                if channel_manager and channel_manager.session_manager:
+                    session_manager = channel_manager.session_manager
+                    if old_session_id and old_session_id in session_manager._sessions:
+                        del session_manager._sessions[old_session_id]
+                        logger.info(f"✅ Invalidated cached session: {old_session_id}")
+                    # Also invalidate session store cache to force reload
+                    session_manager._session_store_loaded_at = 0.0
+                    logger.info(f"✅ Invalidated session store cache")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate session cache: {e}")
         
         # Delete old transcript
         if old_session_id:
@@ -530,11 +546,11 @@ class SessionsDeleteMethod:
         store = load_session_store(target.store_path)
         entry = store.get(target.canonical_key)
         
-        if entry and entry.session_id:
+        if entry and entry.sessionId:
             delete_transcript(
-                entry.session_id,
+                entry.sessionId,
                 target.store_path,
-                entry.session_file,
+                entry.sessionFile,
                 archive_first=archive_transcript,
                 archive_reason="delete"
             )
@@ -593,15 +609,15 @@ class SessionsCompactMethod:
         store = load_session_store(target.store_path)
         entry = store.get(target.canonical_key)
         
-        if not entry or not entry.session_id:
+        if not entry or not entry.sessionId:
             raise ValueError(f"Session not found: {key}")
         
         # Compact transcript
         result = compact_transcript(
-            entry.session_id,
+            entry.sessionId,
             target.store_path,
             keep_lines=max_lines,
-            session_file=entry.session_file,
+            session_file=entry.sessionFile,
             archive_reason="compaction"
         )
         

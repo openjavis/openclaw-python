@@ -41,7 +41,8 @@ def load_session_store_from_path(store_path: Path | str) -> Dict[str, SessionEnt
         for key, entry_data in data.items():
             if isinstance(entry_data, dict):
                 try:
-                    store[key] = SessionEntry(**entry_data)
+                    # Use from_dict to handle both naming conventions
+                    store[key] = SessionEntry.from_dict(entry_data)
                 except Exception as e:
                     logger.warning(f"Failed to parse session entry {key}: {e}")
             else:

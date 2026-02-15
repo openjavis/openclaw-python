@@ -265,9 +265,9 @@ def load_combined_session_store(
         
         store = load_session_store(str(store_path))
         
-        # Merge with conflict resolution (latest updated_at wins)
+        # Merge with conflict resolution (latest updatedAt wins)
         for key, entry in store.items():
-            if key not in combined or entry.updated_at > combined[key].updated_at:
+            if key not in combined or entry.updatedAt > combined[key].updatedAt:
                 combined[key] = entry
     
     return combined
@@ -307,9 +307,9 @@ def classify_session_key(key: str, entry: Optional[SessionEntry] = None) -> Lite
     
     # Check entry for group indicators
     if entry:
-        if entry.chat_type in ("group", "channel", "supergroup"):
+        if entry.chatType in ("group", "channel", "supergroup"):
             return "group"
-        if entry.group_id or entry.group_channel:
+        if entry.groupId or entry.groupChannel:
             return "group"
     
     # Default to direct
@@ -341,8 +341,8 @@ def derive_session_title(
         Derived title
     """
     # 1. Display name
-    if entry.display_name:
-        return entry.display_name
+    if entry.displayName:
+        return entry.displayName
     
     # 2. Subject
     if entry.subject:
@@ -356,7 +356,7 @@ def derive_session_title(
         return first_user_message
     
     # 4. Session ID prefix
-    return entry.session_id[:8]
+    return entry.sessionId[:8]
 
 
 # ============================================================================
@@ -409,7 +409,7 @@ def list_sessions_from_store(
                 continue
         
         # Spawned by filter
-        if opts.spawned_by and entry.spawned_by != opts.spawned_by:
+        if opts.spawned_by and entry.spawnedBy != opts.spawned_by:
             continue
         
         # Label filter
@@ -420,9 +420,9 @@ def list_sessions_from_store(
         if opts.search:
             search_lower = opts.search.lower()
             searchable = " ".join([
-                entry.session_id,
+                entry.sessionId,
                 entry.label or "",
-                entry.display_name or "",
+                entry.displayName or "",
                 entry.subject or "",
                 key,
             ]).lower()
@@ -439,16 +439,16 @@ def list_sessions_from_store(
         if opts.active_minutes:
             now_ms = int(time.time() * 1000)
             cutoff_ms = now_ms - (opts.active_minutes * 60 * 1000)
-            if entry.updated_at < cutoff_ms:
+            if entry.updatedAt < cutoff_ms:
                 continue
         
         filtered_sessions.append((key, entry))
     
-    # Sort by updated_at (newest first)
-    filtered_sessions.sort(key=lambda x: x[1].updated_at, reverse=True)
+    # Sort by updatedAt (newest first)
+    filtered_sessions.sort(key=lambda x: x[1].updatedAt, reverse=True)
     
     # Apply offset and limit
-    if opts.offset > 0:
+    if opts.offset and opts.offset > 0:
         filtered_sessions = filtered_sessions[opts.offset:]
     if opts.limit:
         filtered_sessions = filtered_sessions[:opts.limit]
@@ -462,57 +462,57 @@ def list_sessions_from_store(
         derived_title = None
         if opts.add_derived_titles:
             first_message = None
-            if entry.session_file or entry.session_id:
+            if entry.sessionFile or entry.sessionId:
                 first_message = read_first_user_message(
-                    entry.session_id,
+                    entry.sessionId,
                     store_path,
-                    entry.session_file
+                    entry.sessionFile
                 )
             derived_title = derive_session_title(entry, first_message)
         
         # Optionally add last message preview
         last_message_preview = None
         if opts.add_last_message_preview:
-            if entry.session_file or entry.session_id:
+            if entry.sessionFile or entry.sessionId:
                 last_message_preview = read_last_message_preview(
-                    entry.session_id,
+                    entry.sessionId,
                     store_path,
-                    entry.session_file
+                    entry.sessionFile
                 )
         
         row = GatewaySessionRow(
             key=key,
             kind=kind,
             label=entry.label,
-            display_name=entry.display_name,
+            display_name=entry.displayName,
             derived_title=derived_title,
             last_message_preview=last_message_preview,
             channel=entry.channel,
             subject=entry.subject,
-            group_channel=entry.group_channel,
+            group_channel=entry.groupChannel,
             space=entry.space,
-            chat_type=entry.chat_type,
+            chat_type=entry.chatType,
             origin=entry.origin.model_dump() if entry.origin else None,
-            updated_at=entry.updated_at,
-            session_id=entry.session_id,
-            system_sent=entry.system_sent,
-            aborted_last_run=entry.aborted_last_run,
-            thinking_level=entry.thinking_level,
-            verbose_level=entry.verbose_level,
-            reasoning_level=entry.reasoning_level,
-            elevated_level=entry.elevated_level,
-            send_policy=entry.send_policy,
-            input_tokens=entry.input_tokens,
-            output_tokens=entry.output_tokens,
-            total_tokens=entry.total_tokens,
-            response_usage=entry.response_usage,
-            model_provider=entry.model_provider,
+            updated_at=entry.updatedAt,
+            session_id=entry.sessionId,
+            system_sent=entry.systemSent,
+            aborted_last_run=entry.abortedLastRun,
+            thinking_level=entry.thinkingLevel,
+            verbose_level=entry.verboseLevel,
+            reasoning_level=entry.reasoningLevel,
+            elevated_level=entry.elevatedLevel,
+            send_policy=entry.sendPolicy,
+            input_tokens=entry.inputTokens,
+            output_tokens=entry.outputTokens,
+            total_tokens=entry.totalTokens,
+            response_usage=entry.responseUsage,
+            model_provider=entry.modelProvider,
             model=entry.model,
-            context_tokens=entry.context_tokens,
-            delivery_context=entry.delivery_context.model_dump() if entry.delivery_context else None,
-            last_channel=entry.last_channel,
-            last_to=entry.last_to,
-            last_account_id=entry.last_account_id,
+            context_tokens=entry.contextTokens,
+            delivery_context=entry.deliveryContext.model_dump() if entry.deliveryContext else None,
+            last_channel=entry.lastChannel,
+            last_to=entry.lastTo,
+            last_account_id=entry.lastAccountId,
         )
         rows.append(row)
     

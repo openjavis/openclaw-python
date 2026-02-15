@@ -126,15 +126,15 @@ class ChatRunRegistry:
                 entry.error = error
                 
                 # Remove from queue
-                if entry.session_id in self._queues:
-                    self._queues[entry.session_id] = [
-                        e for e in self._queues[entry.session_id] 
+                if entry.sessionId in self._queues:
+                    self._queues[entry.sessionId] = [
+                        e for e in self._queues[entry.sessionId] 
                         if e.run_id != run_id
                     ]
                     
                     # Clean up empty queues
-                    if not self._queues[entry.session_id]:
-                        del self._queues[entry.session_id]
+                    if not self._queues[entry.sessionId]:
+                        del self._queues[entry.sessionId]
                 
                 logger.debug(f"Run {run_id} completed (error={error})")
     

@@ -301,47 +301,13 @@ def build_time_section(
     user_timezone: str | None
 ) -> list[str]:
     """Build the Time section (matches TS lines 75-80)."""
-    from datetime import datetime
-    
-    # Always include current date, even if timezone is not set
-    current_date = datetime.now().strftime("%Y-%m-%d")
-    current_time = datetime.now().strftime("%H:%M:%S")
-    day_of_week = datetime.now().strftime("%A")
-    year = datetime.now().strftime("%Y")
-    
-    lines = [
+    if not user_timezone:
+        return []
+    return [
         "## Current Date & Time",
-        f"**Today's date**: {current_date} ({day_of_week})",
-        f"**Current time**: {current_time}",
-        f"**Current year**: {year}",
-        "",
-        f"**CRITICAL NOTICE**: Today is {current_date}. This is the ACTUAL CURRENT DATE, not a future date or system error.",
-        "",
-        "**Your training data may be from 2024 or earlier, but you are now operating in {}. This is NORMAL and CORRECT.**".format(year),
-        "",
-        "**IMPORTANT INSTRUCTIONS:**",
-        "",
-        "1. **NEVER mention or reference 2024** when discussing current events or dates",
-        "2. **NEVER say things like:**",
-        "   - 'system time error' or 'time difference'",
-        "   - 'unable to connect due to time issues'",  
-        "   - '2024 vs 2026 difference'",
-        "   - 'connection failure due to date'",
-        "   - 'my training data is from 2024 so I cannot...'",
-        "",
-        "3. **When searching for current news/events:**",
-        "   - Use 'latest', 'current', 'today', 'recent' - NEVER include '2024'",
-        "   - Search for 'latest news' NOT '2024 news'",
-        "   - Search for 'current events' NOT '2024 events'",
-        "",
-        "4. **Accept {} as the current year and proceed normally with all tasks**".format(year),
+        f"Time zone: {user_timezone}",
         ""
     ]
-    
-    if user_timezone:
-        lines.insert(3, f"**Time zone**: {user_timezone}")
-    
-    return lines
 
 
 def build_workspace_files_note_section() -> list[str]:

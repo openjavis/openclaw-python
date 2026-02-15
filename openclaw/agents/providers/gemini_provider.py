@@ -227,17 +227,28 @@ class GeminiProvider(LLMProvider):
 
             # Add tools if specified
             gemini_tools = []
+            logger.info(f"🔧 Received {len(tools) if tools else 0} tools from runtime")
+            
             if tools:
+                # Import schema cleaner
+                from openclaw.agents.schema import clean_schema_for_gemini
+                
+                logger.info(f"🔧 Tool details: {[t.get('type') if isinstance(t, dict) else type(t).__name__ for t in tools[:5]]}")
+                
                 # Convert custom tools to Gemini function declarations
                 function_declarations = []
                 for tool in tools:
                     if tool.get("type") == "function" and "function" in tool:
                         func_spec = tool["function"]
+                        
+                        # Clean schema for Gemini (remove unsupported keywords)
+                        clean_params = clean_schema_for_gemini(func_spec.get("parameters", {}))
+                        
                         function_declarations.append(
                             types.FunctionDeclaration(
                                 name=func_spec.get("name"),
                                 description=func_spec.get("description", ""),
-                                parameters=func_spec.get("parameters", {}),
+                                parameters=clean_params,
                             )
                         )
                 
@@ -386,12 +397,18 @@ class GeminiProvider(LLMProvider):
             # Send completion
             complete_text = "".join(full_text)
             if not complete_text and not tool_calls:
-                logger.warning(f"⚠️ Gemini returned empty response (no text and no tool calls)")
-                logger.warning(f"Possible reasons:")
-                logger.warning(f"  1. Content may have triggered safety filters")
-                logger.warning(f"  2. Too many images ({len([m for m in messages if m.images])} messages with images)")
-                logger.warning(f"  3. Context length exceeded")
-                logger.warning(f"Suggestion: Try with fewer images (max 10) or simpler prompt")
+                logger.error(f"⚠️ Gemini returned empty response (no text and no tool calls)")
+                logger.error(f"Possible reasons:")
+                logger.error(f"  1. Content may have triggered safety filters")
+                logger.error(f"  2. Too many images ({len([m for m in messages if m.images])} messages with images)")
+                logger.error(f"  3. Context length exceeded")
+                logger.error(f"Suggestion: Try with fewer images (max 10) or simpler prompt")
+                
+                # Yield explicit error event instead of silent failure
+                error_msg = "Model returned empty response. Possible reasons: safety filter triggered, context too long, or too many images. Please try rephrasing your question or reducing context."
+                yield LLMResponse(type="error", content=error_msg)
+                return
+            
             yield LLMResponse(type="done", content=complete_text)
 
         except Exception as e:

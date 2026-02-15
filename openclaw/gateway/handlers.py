@@ -26,6 +26,9 @@ from openclaw.gateway.api.sessions_methods import (
     SessionsCompactMethod,
 )
 
+# Import chat methods
+from openclaw.gateway.api.chat import CHAT_METHODS
+
 logger = logging.getLogger(__name__)
 
 # Type alias for handler functions
@@ -75,6 +78,28 @@ _sessions_patch_method = SessionsPatchMethod()
 _sessions_reset_method = SessionsResetMethod()
 _sessions_delete_method = SessionsDeleteMethod()
 _sessions_compact_method = SessionsCompactMethod()
+
+
+# Register chat methods
+def _register_chat_methods():
+    """Register all chat methods from api/chat.py"""
+    for chat_method in CHAT_METHODS:
+        # Create wrapper that calls method.execute
+        def make_handler(method_obj):
+            async def handler(connection: Any, params: dict[str, Any]) -> dict[str, Any]:
+                try:
+                    return await method_obj.execute(connection, params)
+                except Exception as e:
+                    logger.error(f"Chat method {method_obj.name} error: {e}", exc_info=True)
+                    raise
+            return handler
+        
+        _handlers[chat_method.name] = make_handler(chat_method)
+        logger.debug(f"Registered chat method: {chat_method.name}")
+
+
+# Register chat methods on module load
+_register_chat_methods()
 
 
 # Core method handlers
@@ -230,124 +255,9 @@ async def _run_agent_turn(connection, run_id, session, message, tools, model):
         await connection.send_event("agent", {"runId": run_id, "type": "error", "error": str(e)})
 
 
-@register_handler("chat.send")
-async def handle_chat_send(connection: Any, params: dict[str, Any]) -> dict[str, Any]:
-    """Send chat message"""
-    text = params.get("text", "")
-    session_id = params.get("sessionKey", "main")
-
-    if not text:
-        raise ValueError("text required")
-
-    if not _session_manager:
-        raise RuntimeError("Session manager not initialized")
-
-    # Get session and add message
-    session = _session_manager.get_session(session_id)
-    session.add_user_message(text)
-
-    message_id = f"msg-{int(datetime.now(UTC).timestamp() * 1000)}"
-
-    return {"messageId": message_id}
-
-
-@register_handler("chat.history")
-async def handle_chat_history(connection: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
-    """Get chat history"""
-    session_id = params.get("sessionKey", "main")
-    limit = params.get("limit", 50)
-
-    if not _session_manager:
-        return []
-
-    session = _session_manager.get_session(session_id)
-    messages = session.get_messages(limit=limit)
-
-    return [
-        {"role": msg.role, "content": msg.content, "timestamp": msg.timestamp} for msg in messages
-    ]
-
-
-@register_handler("chat.abort")
-async def handle_chat_abort(connection: Any, params: dict[str, Any]) -> dict[str, Any]:
-    """Abort running chat/agent operation"""
-    run_id = params.get("runId")
-    session_key = params.get("sessionKey")
-    
-    logger.info(f"Abort requested: runId={run_id}, sessionKey={session_key}")
-    
-    # Try to find and cancel the task
-    if not hasattr(connection, "gateway") or not hasattr(connection.gateway, "active_runs"):
-        return {
-            "aborted": False,
-            "reason": "Active runs tracking not initialized"
-        }
-    
-    active_runs = connection.gateway.active_runs
-    
-    # If run_id provided, abort that specific run
-    if run_id and run_id in active_runs:
-        task = active_runs[run_id]
-        if not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            
-            logger.info(f"Aborted run: {run_id}")
-            return {
-                "aborted": True,
-                "runId": run_id
-            }
-        else:
-            return {
-                "aborted": False,
-                "reason": "Run already completed"
-            }
-    
-    # If session_key provided, abort all runs for that session
-    if session_key:
-        aborted_count = 0
-        for run_id_key, task in list(active_runs.items()):
-            # Simple heuristic: check if run belongs to session
-            # In production, should track session_key per run
-            if not task.done():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                aborted_count += 1
-        
-        if aborted_count > 0:
-            logger.info(f"Aborted {aborted_count} runs for session: {session_key}")
-            return {
-                "aborted": True,
-                "count": aborted_count,
-                "sessionKey": session_key
-            }
-    
-    return {
-        "aborted": False,
-        "reason": "No matching active runs found"
-    }
-
-
-@register_handler("chat.inject")
-async def handle_chat_inject(connection: Any, params: dict[str, Any]) -> dict[str, Any]:
-    """Inject a system message into chat"""
-    session_id = params.get("sessionKey", "main")
-    text = params.get("text", "")
-    role = params.get("role", "system")
-
-    if not _session_manager:
-        raise RuntimeError("Session manager not initialized")
-
-    session = _session_manager.get_session(session_id)
-    session.add_message(role, text)
-
-    return {"injected": True}
+# Old chat handlers removed - now using openclaw/gateway/api/chat.py
+# The new chat methods (chat.send, chat.history, chat.abort, chat.inject) 
+# are registered by _register_chat_methods() above
 
 
 @register_handler("agent.identity.get")
@@ -371,26 +281,30 @@ async def handle_agent_wait(connection: Any, params: dict[str, Any]) -> dict[str
 
 
 @register_handler("agents.list")
-async def handle_agents_list(connection: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
-    """List available agents"""
-    # Return configured agents from config
-    # For now, return a simple list with main agent
-    agents = [
+async def handle_agents_list(connection: Any, params: dict[str, Any]) -> dict[str, Any]:
+    """List available agents (matches TypeScript agents.ts format)"""
+    # Return configured agents from config in the correct format
+    agents_data = [
         {
             "id": "main",
-            "label": "Main Agent",
-            "model": connection.config.model if hasattr(connection.config, "model") else "claude-sonnet-4",
-            "enabled": True,
-            "capabilities": {
-                "chat": True,
-                "tools": True,
-                "vision": True,
-                "files": True
+            "name": "Main Agent",
+            "identity": {
+                "name": "OpenClaw Assistant",
+                "theme": None,
+                "emoji": None,
+                "avatar": None,
+                "avatarUrl": None,
             }
         }
     ]
     
-    return agents
+    # Return in TypeScript-aligned format
+    return {
+        "defaultId": "main",
+        "mainKey": "main",
+        "scope": "user",
+        "agents": agents_data
+    }
 
 
 @register_handler("agent.queue.status")
@@ -531,6 +445,69 @@ async def handle_config_schema(connection: Any, params: dict[str, Any]) -> dict[
     config_service = get_config_service()
     schema = config_service.get_config_schema()
     
+    # Add channels schema (matching TypeScript config.schema format)
+    channels_schema = [
+        {
+            "id": "telegram",
+            "label": "Telegram",
+            "description": "Telegram bot channel integration",
+            "configSchema": {
+                "type": "object",
+                "properties": {
+                    "enabled": {"type": "boolean", "description": "Enable Telegram channel"},
+                    "bot_token": {"type": "string", "description": "Telegram bot token"},
+                    "owner_id": {"type": "string", "description": "Owner user ID"},
+                    "allowed_user_ids": {"type": "array", "items": {"type": "string"}, "description": "Allowed user IDs"},
+                    "group_activation_mode": {
+                        "type": "string",
+                        "enum": ["mention", "always"],
+                        "description": "Group activation mode"
+                    }
+                },
+                "required": ["bot_token"]
+            },
+            "configUiHints": {
+                "bot_token": {"type": "password"}
+            }
+        },
+        {
+            "id": "discord",
+            "label": "Discord",
+            "description": "Discord bot channel integration",
+            "configSchema": {
+                "type": "object",
+                "properties": {
+                    "enabled": {"type": "boolean"},
+                    "bot_token": {"type": "string"},
+                },
+                "required": ["bot_token"]
+            },
+            "configUiHints": {
+                "bot_token": {"type": "password"}
+            }
+        },
+        {
+            "id": "slack",
+            "label": "Slack",
+            "description": "Slack bot channel integration",
+            "configSchema": {
+                "type": "object",
+                "properties": {
+                    "enabled": {"type": "boolean"},
+                    "bot_token": {"type": "string"},
+                    "app_token": {"type": "string"},
+                },
+                "required": ["bot_token"]
+            },
+            "configUiHints": {
+                "bot_token": {"type": "password"},
+                "app_token": {"type": "password"}
+            }
+        }
+    ]
+    
+    schema["channels"] = channels_schema
+    
     return {"schema": schema}
 
 
@@ -539,7 +516,7 @@ async def handle_cron_list(connection: Any, params: dict[str, Any]) -> list[dict
     """List cron jobs"""
     from openclaw.cron.service import get_cron_service
     cron_service = get_cron_service()
-    return cron_service.list_jobs()
+    return await cron_service.list_jobs()
 
 
 @register_handler("cron.status")
@@ -556,7 +533,7 @@ async def handle_cron_status(connection: Any, params: dict[str, Any]) -> dict[st
         return status
     
     # Return overall status
-    jobs = cron_service.list_jobs()
+    jobs = await cron_service.list_jobs()
     return {
         "enabled": True,
         "totalJobs": len(jobs),
@@ -566,47 +543,170 @@ async def handle_cron_status(connection: Any, params: dict[str, Any]) -> dict[st
 
 @register_handler("cron.add")
 async def handle_cron_add(connection: Any, params: dict[str, Any]) -> dict[str, Any]:
-    """Add cron job"""
-    from openclaw.cron.service import get_cron_service, CronJob
+    """
+    Add cron job (matches TypeScript API)
+    
+    Expects: { job: CronJobCreate }
+    Returns: CronJob
+    """
+    from openclaw.cron.types import CronJob
+    from openclaw.cron.service import get_cron_service
+    from openclaw.cron.serialization import convert_job_to_api
+    import uuid
+    from datetime import datetime, UTC
     
     job_data = params.get("job", {})
-    job = CronJob(
-        id=job_data.get("id"),
-        schedule=job_data.get("schedule"),
-        action=job_data.get("action"),
-        params=job_data.get("params", {})
-    )
     
+    # Generate id if not provided
+    if "id" not in job_data:
+        job_data["id"] = str(uuid.uuid4())
+    
+    # Add timestamps if not provided
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    if "createdAtMs" not in job_data and "created_at_ms" not in job_data:
+        job_data["created_at_ms"] = now_ms
+    if "updatedAtMs" not in job_data and "updated_at_ms" not in job_data:
+        job_data["updated_at_ms"] = now_ms
+    
+    # Convert from TypeScript format to Python format for CronJob.from_dict
+    # This is needed because from_dict expects snake_case
+    python_job_data = _convert_ts_to_python_job(job_data)
+    
+    # Create CronJob from dict
+    job = CronJob.from_dict(python_job_data)
+    
+    # Add to service
     cron_service = get_cron_service()
-    success = cron_service.add_job(job)
+    if not cron_service:
+        raise RuntimeError("Cron service not available")
     
-    return {
-        "added": success,
-        "id": job.id
-    }
+    created_job = await cron_service.add_job(job)
+    
+    # Convert back to TypeScript API format
+    return convert_job_to_api(created_job.to_dict())
+
+
+def _convert_ts_to_python_job(ts_job: dict[str, Any]) -> dict[str, Any]:
+    """Convert TypeScript job format to Python format"""
+    python_job = {}
+    
+    # Simple fields
+    for ts_key, py_key in [
+        ("id", "id"),
+        ("name", "name"),
+        ("description", "description"),
+        ("enabled", "enabled"),
+        ("agentId", "agent_id"),
+        ("deleteAfterRun", "delete_after_run"),
+        ("createdAtMs", "created_at_ms"),
+        ("updatedAtMs", "updated_at_ms"),
+        ("sessionTarget", "session_target"),
+        ("wakeMode", "wake_mode"),
+    ]:
+        if ts_key in ts_job:
+            python_job[py_key] = ts_job[ts_key]
+    
+    # Schedule (convert kind → type, etc.)
+    if "schedule" in ts_job:
+        ts_schedule = ts_job["schedule"]
+        py_schedule = {"type": ts_schedule.get("kind", "at")}
+        
+        if ts_schedule.get("kind") == "at":
+            py_schedule["timestamp"] = ts_schedule.get("at", "")
+        elif ts_schedule.get("kind") == "every":
+            py_schedule["interval_ms"] = ts_schedule.get("everyMs", 0)
+            if "anchorMs" in ts_schedule:
+                py_schedule["anchor"] = ts_schedule["anchorMs"]
+        elif ts_schedule.get("kind") == "cron":
+            py_schedule["expression"] = ts_schedule.get("expr", "")
+            if "tz" in ts_schedule:
+                py_schedule["timezone"] = ts_schedule["tz"]
+        
+        python_job["schedule"] = py_schedule
+    
+    # Payload (convert message → prompt, etc.)
+    if "payload" in ts_job:
+        ts_payload = ts_job["payload"]
+        py_payload = {"kind": ts_payload.get("kind", "systemEvent")}
+        
+        if ts_payload.get("kind") == "systemEvent":
+            py_payload["text"] = ts_payload.get("text", "")
+        elif ts_payload.get("kind") == "agentTurn":
+            py_payload["prompt"] = ts_payload.get("message", "")
+            if "model" in ts_payload:
+                py_payload["model"] = ts_payload["model"]
+        
+        python_job["payload"] = py_payload
+    
+    # Delivery (convert to → target, bestEffort → best_effort)
+    if "delivery" in ts_job:
+        ts_delivery = ts_job["delivery"]
+        py_delivery = {"mode": ts_delivery.get("mode", "none")}
+        
+        if "channel" in ts_delivery:
+            py_delivery["channel"] = ts_delivery["channel"]
+        if "to" in ts_delivery:
+            py_delivery["target"] = ts_delivery["to"]
+        if "bestEffort" in ts_delivery:
+            py_delivery["best_effort"] = ts_delivery["bestEffort"]
+        
+        python_job["delivery"] = py_delivery
+    
+    # State
+    if "state" in ts_job:
+        ts_state = ts_job["state"]
+        py_state = {}
+        for ts_key, py_key in [
+            ("nextRunAtMs", "next_run_ms"),
+            ("runningAtMs", "running_at_ms"),
+            ("lastRunAtMs", "last_run_at_ms"),
+            ("lastStatus", "last_status"),
+            ("lastError", "last_error"),
+            ("lastDurationMs", "last_duration_ms"),
+        ]:
+            if ts_key in ts_state:
+                py_state[py_key] = ts_state[ts_key]
+        
+        python_job["state"] = py_state
+    
+    return python_job
 
 
 @register_handler("cron.update")
 async def handle_cron_update(connection: Any, params: dict[str, Any]) -> dict[str, Any]:
-    """Update cron job"""
-    from openclaw.cron.service import get_cron_service, CronJob
+    """
+    Update cron job (matches TypeScript API)
+    
+    Expects: { id: string, patch: Partial<CronJob> }
+    Returns: CronJob
+    """
+    from openclaw.cron.service import get_cron_service
+    from openclaw.cron.serialization import convert_job_to_api
+    from datetime import datetime, UTC
     
     job_id = params.get("jobId")
-    job_data = params.get("job", {})
+    if not job_id:
+        raise ValueError("jobId is required")
     
-    # Remove old job and add updated one
+    patch = params.get("patch", {})
+    if not patch:
+        raise ValueError("patch is required")
+    
+    # Convert TypeScript patch format to Python format
+    python_patch = _convert_ts_to_python_job(patch)
+    
+    # Add updated timestamp
+    python_patch["updated_at_ms"] = int(datetime.now(UTC).timestamp() * 1000)
+    
+    # Update via service
     cron_service = get_cron_service()
-    cron_service.remove_job(job_id)
+    if not cron_service:
+        raise RuntimeError("Cron service not available")
     
-    job = CronJob(
-        id=job_id,
-        schedule=job_data.get("schedule"),
-        action=job_data.get("action"),
-        params=job_data.get("params", {})
-    )
-    success = cron_service.add_job(job)
+    updated_job = await cron_service.update_job(job_id, python_patch)
     
-    return {"jobId": job_id, "updated": success}
+    # Convert back to TypeScript API format
+    return convert_job_to_api(updated_job.to_dict())
 
 
 @register_handler("cron.remove")
@@ -615,40 +715,58 @@ async def handle_cron_remove(connection: Any, params: dict[str, Any]) -> dict[st
     from openclaw.cron.service import get_cron_service
     
     job_id = params.get("jobId")
-    cron_service = get_cron_service()
-    success = cron_service.remove_job(job_id)
+    if not job_id:
+        raise ValueError("jobId is required")
     
-    return {"jobId": job_id, "removed": success}
+    cron_service = get_cron_service()
+    result = await cron_service.remove_job(job_id)  # Added await
+    
+    return {"jobId": job_id, "removed": result.get("removed", False)}
 
 
 @register_handler("cron.run")
 async def handle_cron_run(connection: Any, params: dict[str, Any]) -> dict[str, Any]:
-    """Manually run cron job"""
+    """
+    Manually run cron job (matches TypeScript API)
+    
+    Expects: { jobId: string, mode?: "due" | "force" }
+    Returns: { ok: boolean, ran: boolean, reason?: "not-due" }
+    """
     from openclaw.cron.service import get_cron_service
     
     job_id = params.get("jobId")
+    if not job_id:
+        raise ValueError("jobId is required")
+    
+    mode = params.get("mode", "force")
+    
     cron_service = get_cron_service()
+    if not cron_service:
+        raise RuntimeError("Cron service not available")
     
-    # Manually trigger job execution
-    await cron_service._execute_job(job_id)
+    # Use service's run method
+    result = await cron_service.run(job_id, mode=mode)
     
-    return {"jobId": job_id, "ran": True}
+    return result
 
 
 @register_handler("cron.runs")
-async def handle_cron_runs(connection: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
-    """List cron run history"""
+async def handle_cron_runs(connection: Any, params: dict[str, Any]) -> dict[str, Any]:
+    """List cron run history (matches TypeScript format)"""
+    from openclaw.cron.service import get_cron_service
+    from openclaw.cron.serialization import convert_run_log_entry_to_api
+    
     job_id = params.get("jobId")
     limit = params.get("limit", 50)
     
     if not job_id:
-        return []
+        return {"entries": []}
     
     # Get cron service from gateway
     cron_service = get_cron_service()
     if not cron_service:
         logger.warning("Cron service not available")
-        return []
+        return {"entries": []}
     
     try:
         from openclaw.cron.store import CronRunLog
@@ -657,22 +775,13 @@ async def handle_cron_runs(connection: Any, params: dict[str, Any]) -> list[dict
         run_log = CronRunLog(job_id, cron_service.store.store_path.parent / "runs")
         entries = run_log.read(limit=limit)
         
-        # Convert to API format
-        return [
-            {
-                "jobId": entry.get("job_id"),
-                "runId": entry.get("run_id"),
-                "startedAt": entry.get("started_at"),
-                "completedAt": entry.get("completed_at"),
-                "status": entry.get("status"),
-                "result": entry.get("result", {}),
-                "error": entry.get("error")
-            }
-            for entry in entries
-        ]
+        # Convert to TypeScript API format
+        api_entries = [convert_run_log_entry_to_api(entry) for entry in entries]
+        
+        return {"entries": api_entries}
     except Exception as e:
         logger.error(f"Failed to read cron runs: {e}", exc_info=True)
-        return []
+        return {"entries": []}
 
 
 @register_handler("device.pair.list")
@@ -956,6 +1065,25 @@ async def handle_sessions_delete(connection: Any, params: dict[str, Any]) -> dic
 async def handle_sessions_compact(connection: Any, params: dict[str, Any]) -> dict[str, Any]:
     """Compact session - using store-based implementation"""
     return await _sessions_compact_method.execute(connection, params)
+
+
+@register_handler("skills.status")
+async def handle_skills_status(connection: Any, params: dict[str, Any]) -> dict[str, Any]:
+    """Get skills status"""
+    from openclaw.agents.skills_status import build_workspace_skill_status
+    from pathlib import Path
+    
+    agent_id = params.get("agentId", "main")
+    workspace_dir = Path.home() / ".openclaw" / "workspace"
+    
+    config_dict = None
+    if hasattr(connection, 'config'):
+        if hasattr(connection.config, 'model_dump'):
+            config_dict = connection.config.model_dump()
+        elif isinstance(connection.config, dict):
+            config_dict = connection.config
+    
+    return build_workspace_skill_status(workspace_dir, config_dict)
 
 
 @register_handler("skills.install")
@@ -1278,13 +1406,20 @@ async def handle_exec_approval_timeout(connection: Any, params: dict[str, Any]) 
 
 # System handlers
 @register_handler("system.presence")
-async def handle_system_presence(connection: Any, params: dict[str, Any]) -> dict[str, Any]:
-    """System presence/online status"""
-    return {
-        "online": True,
-        "since": datetime.now(UTC).isoformat(),
-        "connections": 1,
-    }
+@register_handler("system-presence")  # Support hyphen format for frontend
+async def handle_system_presence_list(connection: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
+    """List system presences"""
+    try:
+        from openclaw.infra.system_presence import list_system_presence
+        return list_system_presence()
+    except Exception as e:
+        logger.error(f"Failed to get system presence: {e}", exc_info=True)
+        # Return basic status if system_presence module fails
+        return [{
+            "online": True,
+            "since": datetime.now(UTC).isoformat(),
+            "connections": 1,
+        }]
 
 
 @register_handler("system.event")

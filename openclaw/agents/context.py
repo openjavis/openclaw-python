@@ -19,6 +19,55 @@ from typing import Any
 
 from .types import AgentMessage, Content, TextContent
 
+# ---------------------------------------------------------------------------
+# Token Estimation Constants (matching TypeScript)
+# ---------------------------------------------------------------------------
+
+# More accurate than simple chars // 4
+# Based on empirical testing with various LLMs
+CHARS_PER_TOKEN_ESTIMATE = 3.5
+
+# Safety margin to avoid underestimating
+TOKEN_BUFFER_RATIO = 1.1
+
+
+def estimate_tokens_from_text(text: str) -> int:
+    """
+    Estimate tokens from text using character count.
+    
+    Uses improved estimation: chars / 3.5 * 1.1 (buffer)
+    More accurate than the old chars // 4 method.
+    
+    Args:
+        text: Input text
+        
+    Returns:
+        Estimated token count
+    """
+    if not text:
+        return 0
+    
+    char_count = len(text)
+    estimated = char_count / CHARS_PER_TOKEN_ESTIMATE
+    return int(estimated * TOKEN_BUFFER_RATIO)
+
+
+def estimate_tokens_from_messages(messages: list[dict | AgentMessage]) -> int:
+    """
+    Estimate tokens from a list of messages.
+    
+    Args:
+        messages: List of message dictionaries or AgentMessage objects
+        
+    Returns:
+        Total estimated token count
+    """
+    if not messages:
+        return 0
+    
+    total_chars = sum(len(str(msg)) for msg in messages)
+    return estimate_tokens_from_text(str(messages))
+
 
 # Custom message type support (extensible)
 class CustomMessageTypes:
@@ -157,6 +206,38 @@ def convert_to_llm(messages: list[AgentMessage]) -> list[dict[str, Any]]:
                 "role": "system",
                 "content": content
             })
+        
+        elif role == "branchSummary":
+            # Branch summary message (converted to user message with prefix)
+            summary = getattr(msg, "summary", "")
+            prefix = "# Branch Summary (Auto-generated)\n\nThe following is a summary of a parallel branch that was merged:\n\n"
+            
+            msg_dict = {
+                "role": "user",
+                "content": prefix + summary
+            }
+            
+            # Preserve timestamp if present
+            if hasattr(msg, "timestamp"):
+                msg_dict["timestamp"] = msg.timestamp
+            
+            llm_messages.append(msg_dict)
+        
+        elif role == "compactionSummary":
+            # Compaction summary message (converted to user message with prefix)
+            summary = getattr(msg, "summary", "")
+            prefix = "# Compaction Summary (Auto-generated)\n\nThe following is a summary of earlier conversation history:\n\n"
+            
+            msg_dict = {
+                "role": "user",
+                "content": prefix + summary
+            }
+            
+            # Preserve timestamp if present
+            if hasattr(msg, "timestamp"):
+                msg_dict["timestamp"] = msg.timestamp
+            
+            llm_messages.append(msg_dict)
         
         # Handle custom message types (if any)
         elif hasattr(msg, "custom_type"):
@@ -831,9 +912,9 @@ class ContextManager:
         """
         # Handle both int and list inputs
         if isinstance(token_count, list):
-            # Simple token estimation: ~4 chars per token
+            # Use improved token estimation
             total_chars = sum(len(str(msg)) for msg in token_count)
-            estimated_tokens = total_chars // 4
+            estimated_tokens = estimate_tokens_from_text(str(token_count))
         else:
             estimated_tokens = token_count
         
@@ -844,6 +925,155 @@ class ContextManager:
     async def check_context_async(self, token_count: int, max_tokens: int | None = None) -> ContextWindow:
         """Async version of check_context"""
         return self.check_context(token_count, max_tokens)
+
+
+# ---------------------------------------------------------------------------
+# Context window guard (matches TypeScript context-window-guard.ts)
+# ---------------------------------------------------------------------------
+
+CONTEXT_WINDOW_HARD_MIN_TOKENS = 16_000
+CONTEXT_WINDOW_WARN_BELOW_TOKENS = 32_000
+
+
+class ContextWindowInfo:
+    """Resolved context window info with source tracking."""
+
+    __slots__ = ("tokens", "source")
+
+    def __init__(self, tokens: int, source: str):
+        self.tokens = tokens
+        self.source = source  # "model" | "modelsConfig" | "agentContextTokens" | "default"
+
+    def __repr__(self) -> str:
+        return f"ContextWindowInfo(tokens={self.tokens}, source={self.source!r})"
+
+
+class ContextWindowGuardResult(ContextWindowInfo):
+    """Guard result with warning / blocking flags."""
+
+    __slots__ = ("should_warn", "should_block")
+
+    def __init__(
+        self, tokens: int, source: str, should_warn: bool, should_block: bool
+    ):
+        super().__init__(tokens, source)
+        self.should_warn = should_warn
+        self.should_block = should_block
+
+
+def _normalize_positive_int(value: Any) -> int | None:
+    """Normalize to positive int, or None."""
+    if value is None:
+        return None
+    try:
+        v = int(value)
+        return v if v > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
+def resolve_context_window_info(
+    cfg: dict | None,
+    provider: str,
+    model_id: str,
+    model_context_window: int | None = None,
+    default_tokens: int = 32_000,
+) -> ContextWindowInfo:
+    """
+    Resolve the effective context window for a model.
+
+    Priority: modelsConfig > model metadata > agentContextTokens cap > default.
+
+    Matches TypeScript resolveContextWindowInfo().
+    """
+    # Check modelsConfig
+    from_models_config: int | None = None
+    if cfg:
+        providers = (cfg.get("models") or {}).get("providers") or {}
+        provider_entry = providers.get(provider) or {}
+        models = provider_entry.get("models") or []
+        if isinstance(models, list):
+            for m in models:
+                if isinstance(m, dict) and m.get("id") == model_id:
+                    from_models_config = _normalize_positive_int(m.get("contextWindow"))
+                    break
+
+    from_model = _normalize_positive_int(model_context_window)
+
+    if from_models_config:
+        base = ContextWindowInfo(tokens=from_models_config, source="modelsConfig")
+    elif from_model:
+        base = ContextWindowInfo(tokens=from_model, source="model")
+    else:
+        base = ContextWindowInfo(tokens=int(default_tokens), source="default")
+
+    # Apply agentContextTokens cap
+    cap = None
+    if cfg:
+        cap = _normalize_positive_int(
+            (cfg.get("agents") or {}).get("defaults", {}).get("contextTokens")
+        )
+    if cap and cap < base.tokens:
+        return ContextWindowInfo(tokens=cap, source="agentContextTokens")
+
+    return base
+
+
+def evaluate_context_window_guard(
+    info: ContextWindowInfo,
+    warn_below_tokens: int | None = None,
+    hard_min_tokens: int | None = None,
+) -> ContextWindowGuardResult:
+    """
+    Evaluate context window against thresholds.
+
+    Matches TypeScript evaluateContextWindowGuard().
+    """
+    warn_below = max(1, int(warn_below_tokens or CONTEXT_WINDOW_WARN_BELOW_TOKENS))
+    hard_min = max(1, int(hard_min_tokens or CONTEXT_WINDOW_HARD_MIN_TOKENS))
+    tokens = max(0, int(info.tokens))
+
+    return ContextWindowGuardResult(
+        tokens=tokens,
+        source=info.source,
+        should_warn=tokens > 0 and tokens < warn_below,
+        should_block=tokens > 0 and tokens < hard_min,
+    )
+
+
+def check_context_window_status(
+    context_tokens: int,
+    context_window: int,
+) -> dict:
+    """
+    Evaluate context window state with detailed status.
+    
+    Returns remaining tokens, usage percentage, and warning/blocking flags.
+    
+    Args:
+        context_tokens: Current token count in context
+        context_window: Total context window size
+        
+    Returns:
+        Dictionary with:
+        - shouldWarn: bool - < 32k tokens remaining
+        - shouldBlock: bool - < 16k tokens remaining
+        - remaining: int - tokens remaining
+        - usage_percent: float - percentage of window used
+        - context_tokens: int - current token count
+        - context_window: int - total window size
+    """
+    remaining = context_window - context_tokens
+    usage_percent = (context_tokens / context_window * 100) if context_window > 0 else 0
+    
+    return {
+        "shouldWarn": remaining < CONTEXT_WINDOW_WARN_BELOW_TOKENS,
+        "shouldBlock": remaining < CONTEXT_WINDOW_HARD_MIN_TOKENS,
+        "remaining": remaining,
+        "usage_percent": usage_percent,
+        "context_tokens": context_tokens,
+        "context_window": context_window,
+    }
 
 
 __all__ = [
@@ -860,4 +1090,15 @@ __all__ = [
     "inject_history_images_into_messages",
     "ContextManager",
     "ContextWindow",
+    "ContextWindowInfo",
+    "ContextWindowGuardResult",
+    "resolve_context_window_info",
+    "evaluate_context_window_guard",
+    "check_context_window_status",
+    "estimate_tokens_from_text",
+    "estimate_tokens_from_messages",
+    "CONTEXT_WINDOW_HARD_MIN_TOKENS",
+    "CONTEXT_WINDOW_WARN_BELOW_TOKENS",
+    "CHARS_PER_TOKEN_ESTIMATE",
+    "TOKEN_BUFFER_RATIO",
 ]

@@ -119,6 +119,11 @@ class SessionStore:
         # Cache infrastructure - aligned with openclaw-ts
         self._cache: dict[str, SessionStoreCacheEntry] = {}
         self._lock = asyncio.Lock()
+    
+    @property
+    def sessions_dir(self) -> Path:
+        """Public accessor for sessions directory"""
+        return self._sessions_dir
 
         # Load session metadata
         self._sessions: dict[str, SessionEntry] = self._load_sessions()
@@ -535,3 +540,82 @@ class SessionStore:
             return True, reason
         
         return False, None
+
+
+# ---------------------------------------------------------------------------
+# Session freshness evaluation
+# (matches TypeScript openclaw/src/config/sessions/reset.ts)
+# ---------------------------------------------------------------------------
+
+DEFAULT_RESET_MODE = "daily"
+DEFAULT_RESET_AT_HOUR = 4
+DEFAULT_IDLE_MINUTES = 60
+
+
+@dataclass
+class SessionResetPolicy:
+    """Reset policy matching TypeScript SessionResetPolicy."""
+    mode: str = DEFAULT_RESET_MODE  # "daily" | "idle"
+    at_hour: int = DEFAULT_RESET_AT_HOUR
+    idle_minutes: int | None = None
+
+
+@dataclass
+class SessionFreshness:
+    """Freshness result matching TypeScript SessionFreshness."""
+    fresh: bool
+    daily_reset_at: int | None = None
+    idle_expires_at: int | None = None
+
+
+def resolve_daily_reset_at_ms(now_ms: int, at_hour: int) -> int:
+    """Resolve the daily reset threshold timestamp (ms)."""
+    from datetime import datetime, timezone
+
+    now_dt = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc)
+    reset_dt = now_dt.replace(hour=at_hour, minute=0, second=0, microsecond=0)
+    reset_ms = int(reset_dt.timestamp() * 1000)
+
+    # If now is before the reset hour today, use yesterday's reset
+    if now_ms < reset_ms:
+        reset_ms -= 86_400_000  # subtract 24h
+    return reset_ms
+
+
+def evaluate_session_freshness(
+    updated_at_ms: int,
+    now_ms: int,
+    policy: SessionResetPolicy,
+) -> SessionFreshness:
+    """
+    Evaluate whether a session is still fresh.
+
+    Matches TypeScript evaluateSessionFreshness():
+    - daily mode: stale if updatedAt < daily reset boundary
+    - idle mode:  stale if idle time exceeds idleMinutes
+
+    Args:
+        updated_at_ms: Last update time in ms
+        now_ms: Current time in ms
+        policy: Reset policy
+
+    Returns:
+        SessionFreshness with fresh flag and boundary timestamps
+    """
+    daily_reset_at: int | None = None
+    idle_expires_at: int | None = None
+
+    if policy.mode == "daily":
+        daily_reset_at = resolve_daily_reset_at_ms(now_ms, policy.at_hour)
+
+    if policy.idle_minutes is not None:
+        idle_expires_at = updated_at_ms + policy.idle_minutes * 60_000
+
+    stale_daily = daily_reset_at is not None and updated_at_ms < daily_reset_at
+    stale_idle = idle_expires_at is not None and now_ms > idle_expires_at
+
+    return SessionFreshness(
+        fresh=not (stale_daily or stale_idle),
+        daily_reset_at=daily_reset_at,
+        idle_expires_at=idle_expires_at,
+    )

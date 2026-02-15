@@ -1,26 +1,26 @@
-# OpenXJarvis (openclaw-python)
+# OpenClaw Python
 
-> A full-featured Python implementation of the OpenClaw AI assistant platform
+> A Python implementation of the OpenClaw AI assistant platform, actively aligned with the TypeScript version
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**OpenXJarvis** is a complete Python port of OpenClaw, connecting messaging channels (Telegram, Discord, Slack) with AI models (Claude, GPT, Gemini). Built with Python's strengths for clarity and maintainability.
+**OpenClaw Python** is a port of [OpenClaw](https://github.com/openjavis/openclaw), providing AI assistant capabilities through messaging channels (Telegram, Discord, Slack) connected to AI models (Claude, GPT, Gemini).
 
-## Current Status
+## ⚠️ Development Status
 
-**✅ Working:**
-- **Telegram channel integration** (fully operational)
-- Core agent runtime with tool execution
-- 24 built-in tools (file operations, web search, bash, etc.)
-- 56+ skills for specialized tasks
-- Multi-model support (Claude, GPT, Gemini)
+**This is an active development version.** We are continuously improving and aligning with the TypeScript OpenClaw implementation. Features and APIs may change as we reach feature parity.
 
-**🔨 In Development:**
-- Discord, Slack, and WhatsApp channels
-- Web Control UI
-- Voice integration
-- Advanced automation features
+**Recent Improvements:**
+- ✅ Session management aligned with TypeScript (UUID-based, proper reset functionality)
+- ✅ History limiting system (prevents context overload)
+- ✅ Enhanced message handling and tool execution
+- ✅ Context pruning and sanitization
+- 🔄 Ongoing: Full feature parity with TypeScript OpenClaw
+
+**Current Status:**
+- **✅ Working:** Telegram integration, core agent runtime, 24+ built-in tools, 56+ skills
+- **🔨 In Progress:** Discord/Slack channels, Web UI, voice integration
 
 ## Quick Start
 
@@ -28,16 +28,16 @@
 
 - **Python 3.11+** (3.12+ recommended)
 - **uv** package manager
-- At least one LLM API key (Anthropic, OpenAI, or Google Gemini)
-- **For Telegram:** A bot token from [@BotFather](https://t.me/botfather)
+- At least one LLM API key (Anthropic Claude, OpenAI, or Google Gemini)
+- **For Telegram:** Bot token from [@BotFather](https://t.me/botfather)
 
 ### Installation
 
 ```bash
-# Install uv package manager
+# Install uv package manager (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Clone repository
+# Clone the repository
 git clone https://github.com/openxjarvis/openclaw-python.git
 cd openclaw-python
 
@@ -47,12 +47,12 @@ uv sync
 
 ### Configuration
 
-1. **Copy the environment template:**
+1. **Create environment file:**
    ```bash
    cp .env.example .env
    ```
 
-2. **Add your API keys:**
+2. **Add your API keys to `.env`:**
    ```bash
    # Required: At least one AI model provider
    ANTHROPIC_API_KEY=sk-ant-your-key-here
@@ -61,51 +61,87 @@ uv sync
    # OR
    GOOGLE_API_KEY=your-google-key-here
 
-   # Required for Telegram
+   # Required for Telegram integration
    TELEGRAM_BOT_TOKEN=your-telegram-bot-token
    ```
 
 3. **Run initial setup:**
    ```bash
-   # Interactive wizard (recommended)
+   # Interactive onboarding wizard (recommended)
    uv run openclaw onboard
    
-   # QuickStart mode (auto-install Gateway service)
+   # Quick setup with auto-daemon installation
    uv run openclaw onboard --flow quickstart --install-daemon
    ```
 
 ## Command Reference
 
-### Starting the Gateway
+### Gateway Operations
+
+The gateway is the core server that manages channels and AI agent runtime.
+
+#### Start Gateway
 
 ```bash
-# Option 1: Auto-install during onboarding (recommended)
-uv run openclaw onboard --install-daemon
-
-# Option 2: Manual service installation
-uv run openclaw gateway install
-uv run openclaw gateway start
-
-# Option 3: Run in foreground (development mode)
+# Development mode (foreground, see logs directly)
 uv run openclaw start --port 18789 --telegram
+
+# As background service (recommended for production)
+uv run openclaw gateway install  # Install service
+uv run openclaw gateway start    # Start service
 ```
 
-### Managing the Gateway
+**Options for `start` command:**
+- `--port PORT` - Gateway port (default: 18789)
+- `--telegram` - Enable Telegram channel
+- `--discord` - Enable Discord channel (in development)
+- `--slack` - Enable Slack channel (in development)
+
+#### Manage Gateway
 
 ```bash
-# Check status
+# Check gateway status
 uv run openclaw gateway status
 
-# Stop the gateway
-uv run openclaw gateway stop
-# Or use:
-uv run openclaw cleanup --kill-all
-
-# View logs (if running as service)
+# View live logs
 uv run openclaw gateway logs
 
-# Clean up stuck ports
+# Restart gateway
+uv run openclaw gateway restart
+
+# Stop gateway
+uv run openclaw gateway stop
+
+# Uninstall service
+uv run openclaw gateway uninstall
+```
+
+#### Troubleshooting
+
+```bash
+# Run system diagnostics
+uv run openclaw doctor
+
+# Kill all processes (use when gateway is stuck)
+uv run openclaw cleanup --kill-all
+
+# Clean up specific ports
 uv run openclaw cleanup --ports 18789
+
+# Show current configuration
+uv run openclaw config show
+```
+
+### Session Management
+
+Sessions track conversation history. The new session system uses UUIDs for proper isolation.
+
+```bash
+# Reset current session (start fresh conversation)
+# Send "/reset" in your Telegram chat
+
+# Sessions are stored at: ~/.openclaw/agents/main/sessions/
+# Each session has a UUID filename (e.g., 497700f3-7d22-439f-8eb8-a7e1013cf726.json)
 ```
 
 ### Channel Management
@@ -114,106 +150,177 @@ uv run openclaw cleanup --ports 18789
 # List available channels
 uv run openclaw channels list
 
-# Note: Currently only Telegram is operational
+# Currently operational: Telegram only
+# Discord, Slack, WhatsApp: In development
 ```
 
 ### Access Control (Pairing)
 
-Control who can access your bot via Telegram:
+Control who can interact with your bot via Telegram.
 
 ```bash
 # View pending pairing requests
 uv run openclaw pairing list telegram
 
-# Approve a pairing request
+# Approve a user's access request
 uv run openclaw pairing approve telegram <code>
 
-# View allowlist
+# View approved users (allowlist)
 uv run openclaw pairing allowlist telegram
 
 # Deny a request
 uv run openclaw pairing deny telegram <code>
+
+# Revoke access
+uv run openclaw pairing revoke telegram <user_id>
 ```
 
-**DM Policy Options:**
-- `"pairing"` (default) - Requires approval
-- `"allowlist"` - Only allowed users
-- `"open"` - All users (requires `allow_from: ["*"]`)
-- `"disabled"` - No DMs
+**DM Policy Configuration:**
 
-Edit `~/.openclaw/config.json` to change the policy.
+Edit `~/.openclaw/config.json` to set policy:
+- `"pairing"` (default) - Requires manual approval
+- `"allowlist"` - Only pre-approved users
+- `"open"` - Any user (requires `allow_from: ["*"]`)
+- `"disabled"` - No DM access
 
-### Troubleshooting
+### Configuration Commands
 
 ```bash
-# Run diagnostics
-uv run openclaw doctor
-
-# Check configuration
+# View current configuration
 uv run openclaw config show
 
-# View service logs
-tail -f /Users/Shared/.openclaw/logs/gateway.out.log
-
-# Clean up processes
-uv run openclaw cleanup --kill-all
+# Edit configuration file
+# Location: ~/.openclaw/config.json
 ```
 
 ## Using with Telegram
 
-1. **Create a bot:**
-   - Message [@BotFather](https://t.me/botfather)
-   - Send `/newbot` and follow prompts
-   - Copy your bot token to `.env`
+### Setup Steps
 
-2. **Start the gateway:**
+1. **Create a Telegram bot:**
+   - Open Telegram and message [@BotFather](https://t.me/botfather)
+   - Send `/newbot` command
+   - Follow prompts to set bot name and username
+   - Copy the provided bot token
+
+2. **Configure bot token:**
+   ```bash
+   # Add to .env file
+   TELEGRAM_BOT_TOKEN=your-bot-token-here
+   ```
+
+3. **Start the gateway:**
    ```bash
    uv run openclaw start --telegram
    ```
 
-3. **Chat with your bot:**
-   - Find your bot on Telegram
-   - Send a message to start chatting
-   - The agent has access to tools and can execute commands
+4. **Interact with your bot:**
+   - Find your bot on Telegram by username
+   - Start a conversation
+   - The bot has access to tools and can execute commands
 
-## Development
+### Reset Session
 
-```bash
-# Run tests
-uv run pytest
-
-# Format code
-uv run ruff format .
-
-# Lint
-uv run ruff check .
+To start a fresh conversation (clear history):
 ```
+/reset
+```
+
+This creates a new session with a clean slate - no previous conversation history.
 
 ## Architecture
 
 ```
-openclaw/
-├── agents/          # Core agent runtime
-│   └── tools/       # Built-in tools (24 tools)
-├── channels/        # Communication channels
-│   └── telegram/    # ✅ Ready
-├── gateway/         # Gateway server
-├── skills/          # Modular skills (56+)
-├── config/          # Configuration
-└── cli/             # Command-line interface
+openclaw-python/
+├── openclaw/
+│   ├── agents/              # Agent runtime and execution
+│   │   ├── tools/           # 24+ built-in tools
+│   │   ├── extensions/      # Context pruning, etc.
+│   │   └── providers/       # LLM provider integrations
+│   ├── channels/            # Communication channels
+│   │   └── telegram/        # ✅ Fully operational
+│   ├── gateway/             # WebSocket gateway server
+│   │   ├── api/             # RPC method handlers
+│   │   └── protocol/        # Protocol definitions
+│   ├── skills/              # 56+ modular skills
+│   ├── config/              # Configuration management
+│   │   └── sessions/        # Session store and management
+│   ├── routing/             # Message routing and session keys
+│   └── cli/                 # Command-line interface
+└── tests/                   # Test suite
 ```
 
-## Workspace
+## Workspace Files
 
-Your workspace at `~/.openclaw/workspace/` contains:
+Your workspace at `~/.openclaw/workspace/` contains agent configuration:
 
-- **SOUL.md** - Agent personality and values
-- **AGENTS.md** - Operating instructions
-- **TOOLS.md** - Tool configurations
-- **USER.md** - User profile
-- **IDENTITY.md** - Agent identity
+- **SOUL.md** - Agent personality, values, and behavior
+- **AGENTS.md** - Operating instructions and guidelines
+- **TOOLS.md** - Tool availability and configurations
+- **USER.md** - User profile and preferences
+- **IDENTITY.md** - Agent identity and capabilities
 
-These files are injected into the agent's system prompt.
+These markdown files are injected into the agent's system prompt, shaping its behavior and responses.
+
+## Development
+
+```bash
+# Run test suite
+uv run pytest
+
+# Run specific test file
+uv run pytest tests/test_session_reset_alignment.py
+
+# Format code
+uv run ruff format .
+
+# Lint code
+uv run ruff check .
+
+# Type checking (if mypy configured)
+uv run mypy openclaw/
+```
+
+## File Structure
+
+```
+~/.openclaw/                      # Configuration directory
+├── config.json                   # Main configuration
+├── workspace/                    # Agent workspace
+│   ├── SOUL.md                  # Personality
+│   ├── AGENTS.md                # Instructions
+│   └── ...
+├── agents/
+│   └── main/
+│       └── sessions/            # Session storage (UUID-based)
+│           ├── <uuid>.json      # Session files
+│           └── sessions.json    # Session index
+└── logs/
+    └── gateway.out.log          # Gateway logs
+```
+
+## Alignment with TypeScript OpenClaw
+
+We are actively working to align this Python implementation with the TypeScript OpenClaw:
+
+**Recently Aligned:**
+- ✅ Session key format: `agent:main:telegram:dm:<chat_id>`
+- ✅ UUID-based session IDs (changes on reset)
+- ✅ Session file paths: `~/.openclaw/agents/main/sessions/<uuid>.json`
+- ✅ History limiting (prevents context overflow)
+- ✅ Context pruning and sanitization
+- ✅ Tool execution and follow-up handling
+- ✅ Gateway protocol and RPC methods
+
+**In Progress:**
+- 🔄 Web Control UI
+- 🔄 Additional channel integrations
+- 🔄 Advanced automation features
+- 🔄 Voice integration
+
+## Contributing
+
+This project is under active development. While we welcome interest, please note that APIs and features are still evolving as we work toward full OpenClaw compatibility.
 
 ## License
 
@@ -221,15 +328,16 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Credits
 
-This is a Python port of the original [OpenClaw](https://github.com/openjavis/openclaw) TypeScript project.
+This is a Python port of the original [OpenClaw](https://github.com/openjavis/openclaw) TypeScript project by the OpenJavis team.
 
 ## Links
 
-- [OpenClaw (TypeScript)](https://github.com/openjavis/openclaw)
+- [OpenClaw (TypeScript)](https://github.com/openjavis/openclaw) - Original implementation
 - [Issue Tracker](https://github.com/openxjarvis/openclaw-python/issues)
-- [Telegram BotFather](https://t.me/botfather)
+- [Telegram BotFather](https://t.me/botfather) - Create Telegram bots
 
 ---
 
-**Status**: Telegram Ready • Other Channels In Development  
-**Python**: 3.11+ required, 3.12+ recommended
+**Status**: Active Development • Telegram Ready • Aligning with OpenClaw TypeScript  
+**Python**: 3.11+ required, 3.12+ recommended  
+**Updates**: Frequent improvements and fixes
