@@ -753,8 +753,9 @@ class MultiProviderRuntime:
                     elif response.type == "tool_call":
                         tool_calls = response.tool_calls or []
                         
-                        # Store tool results to add AFTER assistant message
-                        tool_results_to_add = []
+                        # CRITICAL: Do NOT reinitialize tool_results_to_add here
+                        # It's already initialized at line 698, reusing is correct
+                        # Each tool_call response will append to the same list
 
                         # Execute tools
                         for tc in tool_calls:
@@ -1093,19 +1094,18 @@ class MultiProviderRuntime:
                     accumulated_text = ""
                     tool_calls = []
                     
-                    # Stream the final response WITH tools available
-                    # The model can choose to return text or call more tools
+                    # CRITICAL FIX: Disable tools in follow-up call to prevent infinite loop
+                    # After tool execution, we want the model to provide a text response
+                    # NOT call more tools, which would create an infinite loop
                     # This aligns with TypeScript openclaw behavior
+                    logger.info(f"🚫 Disabling tools for follow-up call (preventing loop)")
                     
-                    # Reuse the same tools_param from initial call
-                    logger.info(f"🔧 Re-using {len(tools_param) if tools_param else 0} tools for follow-up call")
-                    
-                    # Track if follow-up call triggered more tools
+                    # Track if follow-up call triggered more tools (should be empty)
                     followup_tool_calls = []
                     
                     async for response in self.provider.stream(
                         messages=llm_messages, 
-                        tools=tools_param,  # ✅ Pass same tool list as initial call
+                        tools=[],  # ✅ Empty tools array to disable further tool calling
                         max_tokens=max_tokens,
                         **self.extra_params
                     ):
