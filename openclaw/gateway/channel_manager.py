@@ -25,6 +25,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ..agents.agent_session import AgentSession
 from ..agents.runtime import AgentRuntime
 from ..channels.base import ChannelPlugin, InboundMessage, MessageHandler
 from ..events import Event, EventType
@@ -847,7 +848,7 @@ class ChannelManager:
                 # Process through Agent Runtime
                 response_text = ""
                 has_error = False
-                logger.info(f"[{channel_id}] Starting runtime.run_turn with {len(self.tools)} tools")
+                logger.info(f"[{channel_id}] Starting AgentSession.prompt with {len(self.tools)} tools")
 
                 # Extract images from context
                 images = None
@@ -858,53 +859,73 @@ class ChannelManager:
                 # Use BodyForAgent (properly formatted with sender metadata for groups)
                 message_text = ctx.BodyForAgent or ctx.Body
                 
-                async for event in runtime.run_turn(
-                    session, 
-                    message_text, 
-                    tools=self.tools, 
-                    images=images,
-                    system_prompt=self.system_prompt
-                ):
-                    event_type_str = str(getattr(event, 'type', 'unknown'))
-                    logger.debug(f"[{channel_id}] Event received: type={event_type_str}")
-                    if hasattr(event, "type"):
-                        # Handle EventType enum or string
-                        event_type_value = event.type.value if hasattr(event.type, 'value') else str(event.type)
-                        
-                        if event_type_value == "agent.text" or event_type_value == "text":
-                            delta_text = event.data.get("delta", {}).get("text", "")
-                            response_text += delta_text
-                            logger.debug(f"[{channel_id}] Text delta: {delta_text[:50]}...")
-                        elif event_type_value == "agent.file_generated":
-                            # Handle file generated event - send file to user
-                            file_path = event.data.get("file_path")
-                            file_type = event.data.get("file_type", "document")
-                            caption = event.data.get("caption", "")
+                # Create AgentSession (pi-ai style)
+                agent_session = AgentSession(
+                    session=session,
+                    runtime=runtime,
+                    tools=self.tools,
+                    system_prompt=self.system_prompt,
+                    max_iterations=5,
+                    max_tokens=4096,
+                    max_turns=None,
+                )
+                
+                # Collect events from AgentSession
+                events_queue = []
+                
+                def collect_event(event):
+                    """Collect events synchronously"""
+                    events_queue.append(event)
+                
+                # Subscribe to events
+                unsubscribe = agent_session.subscribe(collect_event)
+                
+                try:
+                    # Execute prompt (pi-ai style - automatic tool loop)
+                    await agent_session.prompt(message_text, images=images)
+                    
+                    # Process collected events
+                    for event in events_queue:
+                        event_type_str = str(getattr(event, 'type', 'unknown'))
+                        logger.debug(f"[{channel_id}] Event received: type={event_type_str}")
+                        if hasattr(event, "type"):
+                            # Handle EventType enum or string
+                            event_type_value = event.type.value if hasattr(event.type, 'value') else str(event.type)
                             
-                            if file_path and Path(file_path).exists():
-                                logger.info(f"[{channel_id}] Sending generated file: {file_path}")
-                                try:
-                                    await channel.send_media(
-                                        target=message.chat_id,
-                                        media_url=file_path,
-                                        media_type=file_type,
-                                        caption=caption
-                                    )
-                                    logger.info(f"📎 [{channel_id}] Sent file to {message.chat_id}: {Path(file_path).name}")
-                                except Exception as e:
-                                    logger.error(f"Failed to send file: {e}", exc_info=True)
-                            else:
-                                logger.warning(f"[{channel_id}] File not found or path missing: {file_path}")
-                        elif event_type_value == "agent.turn_complete" or event_type_value == "turn_complete":
-                            logger.info(f"[{channel_id}] Turn complete")
-                            break
-                    elif isinstance(event, dict):
-                        if event.get("type") == "text":
-                            response_text += event.get("text", "")
-                        elif event.get("type") == "turn_complete":
-                            break
-
-                logger.info(f"[{channel_id}] Accumulated response length: {len(response_text)}")
+                            if event_type_value == "agent.text" or event_type_value == "text":
+                                delta_text = event.data.get("delta", {}).get("text", "")
+                                response_text += delta_text
+                                logger.debug(f"[{channel_id}] Text delta: {delta_text[:50]}...")
+                            elif event_type_value == "agent.file_generated":
+                                # Handle file generated event - send file to user
+                                file_path = event.data.get("file_path")
+                                file_type = event.data.get("file_type", "document")
+                                caption = event.data.get("caption", "")
+                                
+                                if file_path and Path(file_path).exists():
+                                    logger.info(f"[{channel_id}] Sending generated file: {file_path}")
+                                    try:
+                                        await channel.send_media(
+                                            target=message.chat_id,
+                                            media_url=file_path,
+                                            media_type=file_type,
+                                            caption=caption
+                                        )
+                                        logger.info(f"📎 [{channel_id}] Sent file to {message.chat_id}: {Path(file_path).name}")
+                                    except Exception as e:
+                                        logger.error(f"Failed to send file: {e}", exc_info=True)
+                                else:
+                                    logger.warning(f"[{channel_id}] File not found or path missing: {file_path}")
+                            elif event_type_value == "agent.turn_complete" or event_type_value == "turn_complete":
+                                logger.info(f"[{channel_id}] Turn complete")
+                        elif isinstance(event, dict):
+                            if event.get("type") == "text":
+                                response_text += event.get("text", "")
+                    
+                    logger.info(f"[{channel_id}] Accumulated response length: {len(response_text)}")
+                finally:
+                    # Unsubscribe from events
+                    unsubscribe()
 
                 # Send response back
                 if response_text:

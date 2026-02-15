@@ -2,6 +2,7 @@
 Agent module for ClawdBot
 """
 
+from .agent_session import AgentSession
 from .context import ContextManager, ContextWindow
 from .errors import (
     AgentError,
@@ -17,11 +18,14 @@ from .errors import (
 )
 from .runtime import AgentEvent, AgentRuntime
 from .session import Message, Session, SessionManager
+from .tool_loop import ToolLoopOrchestrator
 
 __all__ = [
     # Runtime
     "AgentRuntime",
     "AgentEvent",
+    "AgentSession",  # New pi-ai style session
+    "ToolLoopOrchestrator",  # Tool loop orchestrator
     # Session
     "Session",
     "SessionManager",

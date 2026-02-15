@@ -284,6 +284,173 @@ class MultiProviderRuntime:
             logger.warning(f"Unknown provider '{provider_name}', trying OpenAI-compatible mode")
             return OpenAIProvider(**kwargs)
 
+    async def _stream_single_turn(
+        self,
+        session: Session,
+        messages: list[LLMMessage],
+        tools: list[AgentTool],
+        max_tokens: int = 4096,
+        is_followup: bool = False,
+    ) -> AsyncIterator[Event | AgentEvent]:
+        """Stream a single LLM turn without follow-up logic
+        
+        This method is used by ToolLoopOrchestrator for pi-ai style execution.
+        It handles:
+        - Single LLM call with provided messages
+        - Immediate tool execution if tools are called
+        - Event streaming
+        - NO follow-up logic (orchestrator handles that)
+        
+        Args:
+            session: Session for context
+            messages: Prepared LLM messages
+            tools: Available tools
+            max_tokens: Max tokens for response
+            is_followup: Whether this is a follow-up call (for logging)
+            
+        Yields:
+            Events from the execution
+        """
+        logger.info(f"🔄 _stream_single_turn: {len(messages)} messages, {len(tools)} tools, followup={is_followup}")
+        
+        # Format tools for provider
+        tools_param = []
+        if tools:
+            formatted_tools = self.tool_adapter.to_tool_definitions(tools)
+            tools_param = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t["name"],
+                        "description": t.get("description", ""),
+                        "parameters": t.get("parameters", {}),
+                    },
+                }
+                for t in formatted_tools
+            ]
+            logger.info(f"🔧 Formatted {len(tools_param)} tools for provider")
+        
+        # Stream from provider
+        accumulated_text = ""
+        tool_calls = []
+        
+        async for response in self.provider.stream(
+            messages=messages,
+            tools=tools_param,
+            max_tokens=max_tokens,
+            **self.extra_params
+        ):
+            if response.type == "text_delta":
+                text = response.content
+                if not text:
+                    continue
+                
+                accumulated_text += text
+                
+                # Stream text event
+                event = Event(
+                    type=EventType.AGENT_TEXT,
+                    source="agent-runtime",
+                    session_id=session.session_id,
+                    data={"delta": {"type": "text_delta", "text": text}},
+                )
+                yield event
+            
+            elif response.type == "tool_call":
+                tool_calls = response.tool_calls or []
+                
+                # Execute tools immediately
+                for tc in tool_calls:
+                    tool = next((t for t in tools if t.name == tc["name"]), None)
+                    if tool:
+                        # Emit tool execution start
+                        start_event = Event(
+                            type=EventType.TOOL_EXECUTION_START,
+                            source="agent-runtime",
+                            session_id=session.session_id,
+                            data={
+                                "tool_call_id": tc["id"],
+                                "tool_name": tc["name"],
+                                "args": tc["arguments"],
+                            },
+                        )
+                        yield start_event
+                        
+                        # Execute tool
+                        try:
+                            result = await tool.execute(**tc["arguments"])
+                            result_str = str(result)
+                            
+                            # Add tool message to session
+                            session.add_tool_message(
+                                tool_call_id=tc["id"],
+                                name=tc["name"],
+                                result=result_str
+                            )
+                            
+                            # Emit tool execution end
+                            end_event = Event(
+                                type=EventType.TOOL_EXECUTION_END,
+                                source="agent-runtime",
+                                session_id=session.session_id,
+                                data={
+                                    "tool_call_id": tc["id"],
+                                    "tool_name": tc["name"],
+                                    "success": True,
+                                    "result": result_str,
+                                },
+                            )
+                            yield end_event
+                            
+                        except Exception as e:
+                            error_msg = f"Tool execution failed: {str(e)}"
+                            logger.error(f"Tool {tc['name']} failed: {e}", exc_info=True)
+                            
+                            # Add error as tool result
+                            session.add_tool_message(
+                                tool_call_id=tc["id"],
+                                name=tc["name"],
+                                result=error_msg
+                            )
+                            
+                            # Emit tool error
+                            error_event = Event(
+                                type=EventType.TOOL_EXECUTION_END,
+                                source="agent-runtime",
+                                session_id=session.session_id,
+                                data={
+                                    "tool_call_id": tc["id"],
+                                    "tool_name": tc["name"],
+                                    "success": False,
+                                    "error": error_msg,
+                                },
+                            )
+                            yield error_event
+                
+                # Add assistant message with tool calls
+                if tool_calls:
+                    session.add_assistant_message(
+                        content=accumulated_text or "",
+                        tool_calls=tool_calls
+                    )
+                    logger.info(f"✅ Added assistant message with {len(tool_calls)} tool calls")
+            
+            elif response.type == "done":
+                # If we have text but no tool calls, add assistant message
+                if accumulated_text and not tool_calls:
+                    session.add_assistant_message(content=accumulated_text)
+                    logger.info(f"✅ Added assistant message: {len(accumulated_text)} chars")
+            
+            elif response.type == "error":
+                error_event = Event(
+                    type=EventType.ERROR,
+                    source="agent-runtime",
+                    session_id=session.session_id,
+                    data={"error": response.content},
+                )
+                yield error_event
+                raise Exception(response.content)
+
     async def run_turn(
         self,
         session: Session,
@@ -297,6 +464,11 @@ class MultiProviderRuntime:
     ) -> AsyncIterator[AgentEvent]:
         """
         Run an agent turn with the configured provider
+
+        .. deprecated:: 0.6.0
+            Use :class:`AgentSession` with ``prompt()`` method instead for pi-ai style
+            automatic tool loop handling. This method will be maintained for backward
+            compatibility but new code should use AgentSession.
 
         Features:
         - Multi-provider support
@@ -318,6 +490,13 @@ class MultiProviderRuntime:
         Yields:
             AgentEvent objects
         """
+        import warnings
+        warnings.warn(
+            "MultiProviderRuntime.run_turn() is deprecated. "
+            "Use AgentSession.prompt() for pi-ai style automatic tool loop handling.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         if tools is None:
             tools = []
 

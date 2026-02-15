@@ -88,7 +88,8 @@ async def resolve_delivery_target(
 async def deliver_result(
     job: CronJob,
     result: dict[str, Any],
-    channel_registry: dict[str, BaseChannel],
+    get_channel_manager: Any = None,
+    channel_registry: dict[str, BaseChannel] | None = None,
     session_history: list[dict[str, Any]] | None = None,
 ) -> bool:
     """
@@ -97,12 +98,21 @@ async def deliver_result(
     Args:
         job: Cron job
         result: Execution result
-        channel_registry: Registry of available channels
+        get_channel_manager: Function to get channel manager (preferred)
+        channel_registry: Registry of available channels (legacy)
         session_history: Session history for resolving "last" channel
         
     Returns:
         True if delivery succeeded
     """
+    # Resolve channel registry from channel manager if provided
+    if get_channel_manager is not None and channel_registry is None:
+        try:
+            channel_manager = get_channel_manager()
+            if channel_manager and hasattr(channel_manager, '_channels'):
+                channel_registry = channel_manager._channels
+        except Exception as e:
+            logger.warning(f"Failed to get channel registry from manager: {e}")
     if not job.delivery:
         logger.debug("No delivery configuration")
         return True  # No delivery needed = success
@@ -124,6 +134,10 @@ async def deliver_result(
             return False
     
     # Get channel
+    if not channel_registry:
+        logger.error("No channel registry available")
+        return False
+    
     channel = channel_registry.get(target.channel)
     
     if not channel:
