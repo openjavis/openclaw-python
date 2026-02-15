@@ -398,8 +398,8 @@ class MultiProviderRuntime:
                             # Add tool message to session
                             session.add_tool_message(
                                 tool_call_id=tc["id"],
-                                name=tc["name"],
-                                result=result_str
+                                content=result_str,
+                                name=tc["name"]
                             )
                             
                             # Emit tool execution end
