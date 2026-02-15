@@ -697,6 +697,8 @@ class MultiProviderRuntime:
                 tool_calls = []
                 tool_results_to_add = []  # Store tool results to add after assistant message
                 needs_tool_response = False
+                tool_call_iterations = 0  # Track tool call iterations to prevent infinite loops
+                MAX_TOOL_ITERATIONS = 5
 
                 async for response in self.provider.stream(
                     messages=llm_messages, 
@@ -1048,9 +1050,28 @@ class MultiProviderRuntime:
                         raise Exception(response.content)
 
                 # If we need to get a response after tool execution, make another API call
-                logger.info(f"🔍 Checking needs_tool_response: {needs_tool_response}")
-                if needs_tool_response:
+                # But limit iterations to prevent infinite loops
+                logger.info(f"🔍 Checking needs_tool_response: {needs_tool_response}, iterations: {tool_call_iterations}/{MAX_TOOL_ITERATIONS}")
+                if needs_tool_response and tool_call_iterations < MAX_TOOL_ITERATIONS:
+                    tool_call_iterations += 1
                     logger.info("📞 Making follow-up API call to get response based on tool results")
+                elif needs_tool_response and tool_call_iterations >= MAX_TOOL_ITERATIONS:
+                    logger.error(f"🔴 Maximum tool iterations ({MAX_TOOL_ITERATIONS}) reached. Stopping to prevent infinite loop.")
+                    # Provide fallback response
+                    fallback_text = "I've executed multiple tools but encountered difficulty generating a final response. The tool results have been processed."
+                    session.add_assistant_message(content=fallback_text)
+                    
+                    # Send text event
+                    text_event = Event(
+                        type=EventType.TEXT,
+                        source="agent-runtime",
+                        session_id=session.session_id if session else None,
+                        data={"delta": {"text": fallback_text}},
+                    )
+                    await self._notify_observers(text_event)
+                    yield text_event
+                    
+                    needs_tool_response = False
                     
                     # Rebuild messages with tool results
                     # CRITICAL: Apply same history limiting as initial call
@@ -1123,24 +1144,41 @@ class MultiProviderRuntime:
                             await self._notify_observers(event)
                             yield event
                         
-                        elif response.type == "tool_use":
-                            # Model called another tool in follow-up (unexpected)
-                            # Log it but don't execute - this should be rare
-                            tool_call = response.content
-                            followup_tool_calls.append(tool_call)
-                            logger.warning(f"⚠️ Follow-up call unexpectedly triggered tool: {tool_call.get('name')}")
-                            logger.warning("This may indicate the model didn't understand the tool results.")
+                        elif response.type == "tool_call":
+                            # CRITICAL: Tool call in follow-up indicates infinite loop
+                            # Stop immediately and return whatever text we have
+                            followup_tool_calls = response.tool_calls or []
+                            logger.warning(f"🔴 Tool call loop detected in follow-up (iteration {tool_call_iterations}): {[tc['name'] for tc in followup_tool_calls]}")
+                            logger.warning(f"🛑 Stopping to prevent infinite loop")
+                            
+                            # Use accumulated text or provide fallback
+                            final_text = accumulated_text or "I've executed the requested tools. The results are ready."
+                            session.add_assistant_message(content=final_text)
+                            logger.info(f"✅ Added assistant message (loop break): text={len(final_text)} chars")
+                            
+                            # Send text event if we have text
+                            if final_text:
+                                text_event = Event(
+                                    type=EventType.TEXT,
+                                    source="agent-runtime",
+                                    session_id=session.session_id if session else None,
+                                    data={"delta": {"text": final_text}},
+                                )
+                                await self._notify_observers(text_event)
+                                yield text_event
+                            
+                            # Stop the loop
+                            needs_tool_response = False
+                            break
                             
                         elif response.type == "done":
-                            # If follow-up call triggered more tools, add them to the message
-                            all_tool_calls = initial_tool_calls + followup_tool_calls
-                            
+                            # Got final text response
                             final_response_text = accumulated_text or ""  # Ensure never None
                             
-                            # Add assistant message with all tool calls and accumulated text
-                            if all_tool_calls or final_response_text:
-                                session.add_assistant_message(final_response_text, all_tool_calls)
-                                logger.info(f"✅ Added assistant message: text={len(final_response_text)} chars, tools={len(all_tool_calls)}")
+                            # Add assistant message
+                            if final_response_text:
+                                session.add_assistant_message(content=final_response_text)
+                                logger.info(f"✅ Added assistant message (follow-up done): text={len(final_response_text)} chars")
                             
                             break
                             
