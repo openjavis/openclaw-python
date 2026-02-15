@@ -36,6 +36,8 @@ ENV/
 *.tmp
 *.temp
 *.log
+test_*.py
+!tests/test_*.py
 
 # macOS
 .DS_Store
