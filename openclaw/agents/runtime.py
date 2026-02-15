@@ -392,7 +392,13 @@ class MultiProviderRuntime:
                         
                         # Execute tool
                         try:
-                            result = await tool.execute(**tc["arguments"])
+                            # Call with correct signature: execute(tool_call_id, params, signal, on_update)
+                            result = await tool.execute(
+                                tool_call_id=tc["id"],
+                                params=tc["arguments"],
+                                signal=None,
+                                on_update=None
+                            )
                             result_str = str(result)
                             
                             # Add tool message to session
@@ -423,8 +429,8 @@ class MultiProviderRuntime:
                             # Add error as tool result
                             session.add_tool_message(
                                 tool_call_id=tc["id"],
-                                name=tc["name"],
-                                result=error_msg
+                                content=error_msg,
+                                name=tc["name"]
                             )
                             
                             # Emit tool error
