@@ -46,10 +46,20 @@ def sanitize_session_history(messages: list[dict[str, Any]]) -> list[dict[str, A
             clean_msg["id"] = msg["id"]
         if "timestamp" in msg:
             clean_msg["timestamp"] = msg["timestamp"]
+        
+        # Support both camelCase (TypeScript) and snake_case (Python)
         if "toolCallId" in msg:
             clean_msg["toolCallId"] = msg["toolCallId"]
+        if "tool_call_id" in msg:
+            clean_msg["tool_call_id"] = msg["tool_call_id"]
+        
         if "toolName" in msg:
             clean_msg["toolName"] = msg["toolName"]
+        if "name" in msg:
+            clean_msg["name"] = msg["name"]
+        
+        if "tool_calls" in msg:
+            clean_msg["tool_calls"] = msg["tool_calls"]
         
         # Skip empty content
         content = clean_msg["content"]
