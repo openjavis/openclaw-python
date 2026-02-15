@@ -1094,18 +1094,18 @@ class MultiProviderRuntime:
                     accumulated_text = ""
                     tool_calls = []
                     
-                    # CRITICAL FIX: Disable tools in follow-up call to prevent infinite loop
-                    # After tool execution, we want the model to provide a text response
-                    # NOT call more tools, which would create an infinite loop
-                    # This aligns with TypeScript openclaw behavior
-                    logger.info(f"🚫 Disabling tools for follow-up call (preventing loop)")
+                    # CRITICAL: For follow-up call after tools, we need to pass tools
+                    # but configure Gemini to prefer text responses
+                    # Passing empty tools array causes Gemini to return empty response
+                    # when history contains tool messages
+                    logger.info(f"🔧 Follow-up call: passing tools but will prefer text response")
                     
-                    # Track if follow-up call triggered more tools (should be empty)
+                    # Track if follow-up call triggered more tools
                     followup_tool_calls = []
                     
                     async for response in self.provider.stream(
                         messages=llm_messages, 
-                        tools=[],  # ✅ Empty tools array to disable further tool calling
+                        tools=tools_param,  # ✅ Pass tools to maintain consistency with history
                         max_tokens=max_tokens,
                         **self.extra_params
                     ):
