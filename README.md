@@ -1,11 +1,11 @@
-# OpenXJarvis (OpenClaw Python)
+# OpenXJarvis (openclaw-python)
 
 > A Python implementation of the OpenClaw AI assistant platform, actively aligned with the TypeScript version
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**OpenClaw Python** is a port of [OpenClaw](https://github.com/openjavis/openclaw), providing AI assistant capabilities through messaging channels (Telegram, Discord, Slack) connected to AI models (Claude, GPT, Gemini).
+**OpenXJarvis** is a complete Python port of OpenClaw, connecting messaging channels (Telegram, Discord, Slack) with AI models (Claude, GPT, Gemini). Built with Python's strengths for clarity and maintainability.
 
 ## ⚠️ Development Status
 
@@ -96,6 +96,38 @@ uv run openclaw gateway start    # Start service
 - `--telegram` - Enable Telegram channel
 - `--discord` - Enable Discord channel (in development)
 - `--slack` - Enable Slack channel (in development)
+
+#### Access Web Control UI
+
+Once the gateway is running, you can access the Web Control UI:
+
+```bash
+# Gateway must be running first
+uv run openclaw start --telegram
+
+# Open in browser
+http://localhost:18789
+```
+
+**Build Web UI (if needed):**
+
+If the UI files are not built, you'll see a message to build them:
+
+```bash
+# Navigate to UI source directory
+cd openclaw/web/ui-src
+
+# Install dependencies
+npm install
+
+# Build for production
+npm run build
+
+# Or run in development mode
+npm run dev
+```
+
+The gateway automatically serves the built UI files from `openclaw/web/dist/`.
 
 #### Manage Gateway
 
