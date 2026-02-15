@@ -1,4 +1,4 @@
-# OpenClaw Python
+# OpenXJarvis (OpenClaw Python)
 
 > A Python implementation of the OpenClaw AI assistant platform, actively aligned with the TypeScript version
 
