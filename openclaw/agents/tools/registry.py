@@ -1,12 +1,12 @@
 """Tool registry"""
 from __future__ import annotations
 
-
+import os
 from typing import Any, Optional
 
 from ..session import SessionManager
 from .base import AgentTool
-from .bash import BashTool
+from . import create_coding_tools
 from .browser import BrowserTool
 from .canvas import CanvasTool
 from .channel_actions import (
@@ -18,7 +18,6 @@ from .channel_actions import (
 )
 from .cron import CronTool
 from .document_gen import PPTGeneratorTool, PDFGeneratorTool
-from .file_ops import EditFileTool, ReadFileTool, WriteFileTool
 from .image import ImageTool
 from .memory import MemoryGetTool, MemorySearchTool
 from .nodes import NodesTool
@@ -51,13 +50,13 @@ class ToolRegistry:
 
     def _register_default_tools(self) -> None:
         """Register default tools"""
-        # File operations
-        self.register(ReadFileTool())
-        self.register(WriteFileTool())
-        self.register(EditFileTool())
-
-        # Process execution
-        self.register(BashTool())
+        # Get current working directory
+        cwd = str(self._workspace_dir) if self._workspace_dir else os.getcwd()
+        
+        # Use factory functions to create coding tools (read, bash, edit, write)
+        coding_tools = create_coding_tools(cwd)
+        for tool in coding_tools:
+            self.register(tool)
 
         # Web tools
         self.register(WebFetchTool())

@@ -54,7 +54,7 @@ class AgentEventType(str, Enum):
 
 
 @dataclass
-class AgentEvent:
+class AgentEvent(BaseEvent):
     """Base agent event"""
     
     type: AgentEventType
@@ -394,7 +394,3 @@ class AgentEventStream:
         if event is None:
             raise StopAsyncIteration
         return event
-
-
-# Backwards compatibility with existing Event system
-AgentEvent.__bases__ = (BaseEvent,)

@@ -12,11 +12,37 @@ import type {
   SkillStatusReport,
 } from "../types.ts";
 import {
-  expandToolGroups,
+  TOOL_GROUPS,
   normalizeToolName,
-  resolveToolProfilePolicy,
-} from "../../../../src/agents/tool-policy.js";
+} from "../../utils/tool-policy.js";
 import { formatAgo } from "../format.ts";
+
+// Simplified helpers (replacing complex TS functions)
+function expandToolGroups(tools: string[]): string[] {
+  const expanded = new Set<string>();
+  for (const tool of tools) {
+    if (tool.startsWith("group:")) {
+      const group = TOOL_GROUPS[tool];
+      if (group) {
+        group.forEach(t => expanded.add(t));
+      }
+    } else {
+      expanded.add(tool);
+    }
+  }
+  return Array.from(expanded);
+}
+
+function resolveToolProfilePolicy(profileId: string) {
+  // Simplified - just return allow/deny lists
+  const profiles: Record<string, { allow?: string[]; deny?: string[] }> = {
+    minimal: { allow: ["session_status"] },
+    coding: { allow: ["group:fs", "group:runtime", "group:sessions", "group:memory", "image"] },
+    messaging: { allow: ["group:messaging", "sessions_list", "sessions_history", "sessions_send", "session_status"] },
+    full: {},
+  };
+  return profiles[profileId] || {};
+}
 import {
   formatCronPayload,
   formatCronSchedule,

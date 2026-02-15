@@ -30,8 +30,9 @@ def generate_launchd_plist(
         <string>{python_path}</string>
         <string>-m</string>
         <string>openclaw.cli</string>
-        <string>gateway</string>
         <string>start</string>
+        <string>--port</string>
+        <string>18789</string>
     </array>
     
     <key>WorkingDirectory</key>
@@ -44,10 +45,16 @@ def generate_launchd_plist(
     <true/>
     
     <key>StandardOutPath</key>
-    <string>/tmp/openclaw.out.log</string>
+    <string>/Users/Shared/.openclaw/logs/gateway.out.log</string>
     
     <key>StandardErrorPath</key>
-    <string>/tmp/openclaw.err.log</string>
+    <string>/Users/Shared/.openclaw/logs/gateway.err.log</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
 </dict>
 </plist>
 """

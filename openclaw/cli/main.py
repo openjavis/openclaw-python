@@ -54,9 +54,11 @@ def start(
     if not any([os.getenv("ANTHROPIC_API_KEY"), os.getenv("OPENAI_API_KEY"), os.getenv("GOOGLE_API_KEY")]):
         issues.append("❌ No LLM API key found")
     
-    if telegram and not os.getenv("TELEGRAM_BOT_TOKEN"):
-        issues.append("⚠️  TELEGRAM_BOT_TOKEN not set")
-        telegram = False
+    # Telegram token check - skip if config file exists (will be loaded from config.json)
+    config_exists = (Path.home() / ".openclaw" / "config.json").exists()
+    if telegram and not os.getenv("TELEGRAM_BOT_TOKEN") and not config_exists:
+        issues.append("⚠️  TELEGRAM_BOT_TOKEN not set (will try loading from config)")
+        # Don't disable telegram, let bootstrap handle it
     
     if issues:
         console.print("\n[yellow]Configuration Issues:[/yellow]")
@@ -85,11 +87,27 @@ def start(
             console.print(f"\n[green]✓[/green] Gateway running on ws://127.0.0.1:{results.get('gateway_port', 18789)}")
             console.print("[dim]Press Ctrl+C to stop[/dim]\n")
             
-            # Keep alive until Ctrl+C
+            # Setup signal handlers for graceful shutdown
+            import signal
+            shutdown_event = asyncio.Event()
+            
+            def signal_handler(sig, frame):
+                shutdown_event.set()
+            
+            # Register signal handlers (only on Unix-like systems)
             try:
-                while True:
-                    await asyncio.sleep(1)
-            except KeyboardInterrupt:
+                signal.signal(signal.SIGINT, signal_handler)
+                signal.signal(signal.SIGTERM, signal_handler)
+            except AttributeError:
+                # Windows doesn't have SIGTERM
+                signal.signal(signal.SIGINT, signal_handler)
+            
+            # Wait for shutdown signal
+            try:
+                await shutdown_event.wait()
+            except asyncio.CancelledError:
+                pass
+            finally:
                 console.print("\n[yellow]Shutting down...[/yellow]")
                 await bootstrap.shutdown()
         
@@ -367,10 +385,12 @@ from .plugins_cmd import plugins_app
 from .security_cmd import security_app
 from .sandbox_cmd import sandbox_app
 from .nodes_cmd import nodes_app
+from .pairing_cmd import pairing_app
 from .misc_cmd import register_misc_commands
 
 app.add_typer(gateway_app, name="gateway")
 app.add_typer(channels_app, name="channels")
+app.add_typer(pairing_app, name="pairing")
 app.add_typer(agent_app, name="agent")
 app.add_typer(config_app, name="config")
 app.add_typer(status_app, name="status")
@@ -389,6 +409,7 @@ app.add_typer(security_app, name="security")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(nodes_app, name="nodes")
 
+# Note: pairing_app already added above with channels
 # Register misc commands (tui, update, onboard, setup, configure, etc)
 register_misc_commands(app)
 

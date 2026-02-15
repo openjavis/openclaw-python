@@ -15,10 +15,11 @@ logger = logging.getLogger(__name__)
 class ControlUIServer:
     """HTTP server for serving control UI static files"""
     
-    def __init__(self, gateway, base_path: str = "/", ui_port: int = 8080):
+    def __init__(self, gateway, base_path: str = "/", ui_port: int = 8080, skill_loader=None):
         self.gateway = gateway
         self.base_path = base_path.rstrip("/")
         self.ui_port = ui_port
+        self.skill_loader = skill_loader  # Store skill_loader for /skills endpoint
         self.ui_dir = Path(__file__).parent.parent.parent / "ui" / "dist"
         
         self.app = FastAPI(
@@ -40,6 +41,46 @@ class ControlUIServer:
                 "gateway": "running",
                 "version": "0.6.0"
             })
+        
+        # Skills list endpoint
+        @self.app.get(f"{self.base_path}/skills")
+        async def get_skills():
+            """Get list of available skills"""
+            try:
+                skills_list = []
+                
+                # Use stored skill_loader (matches openclaw-ts skills.status)
+                if self.skill_loader:
+                    # SkillLoader has .skills attribute (dict[str, Skill])
+                    skills_dict = getattr(self.skill_loader, 'skills', {})
+                    skills_list = [
+                        {
+                            "name": skill.name,
+                            "content": skill.content[:200] + "..." if len(skill.content) > 200 else skill.content,
+                            "path": str(skill.path),  # Use 'path' to match Skill model
+                            "source": skill.source,
+                            # Optional metadata fields
+                            "metadata": {
+                                "description": getattr(skill.metadata, 'description', None) if hasattr(skill, 'metadata') else None
+                            }
+                        }
+                        for skill in skills_dict.values()
+                    ]
+                else:
+                    logger.warning("No skill_loader available")
+                
+                return JSONResponse({
+                    "ok": True,
+                    "skills": skills_list,
+                    "count": len(skills_list)
+                })
+            except Exception as e:
+                logger.error(f"Error getting skills: {e}", exc_info=True)
+                return JSONResponse({
+                    "ok": False,
+                    "error": str(e),
+                    "skills": []
+                }, status_code=500)
         
         # Serve static assets if UI directory exists
         if self.ui_dir.exists():

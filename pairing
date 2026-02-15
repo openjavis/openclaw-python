@@ -1,0 +1,4 @@
+#!/bin/bash
+# Pairing management shortcut for OpenClaw Python
+cd "$(dirname "$0")"
+uv run openclaw pairing "$@"

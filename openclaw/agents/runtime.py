@@ -149,6 +149,9 @@ class MultiProviderRuntime:
         self.followup_queue: list[str] = []  # Process these messages after current turn
         self.convert_to_llm_hook: Callable | None = None  # Message conversion hook
         self.transform_context_hook: Callable | None = None  # Context transformation hook
+        
+        # Extensions system (injected by gateway)
+        self.extension_runtime: Any | None = None  # ExtensionRuntime instance
 
     def _parse_model(self, model: str) -> tuple[str, str]:
         """
@@ -287,6 +290,8 @@ class MultiProviderRuntime:
         max_tokens: int = 4096,
         images: list[str] | None = None,
         system_prompt: str | None = None,
+        get_steering_messages: Callable[[], Awaitable[list]] | None = None,
+        get_followup_messages: Callable[[], Awaitable[list]] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """
         Run an agent turn with the configured provider
@@ -375,6 +380,44 @@ class MultiProviderRuntime:
                     last_msg.images = images
         else:
             session.add_user_message(message)
+        
+        # Call before_agent_start hook (openclaw-ts alignment)
+        if self.extension_runtime:
+            try:
+                hook_results = await self.extension_runtime.emit(
+                    "before_agent_start",
+                    {
+                        "prompt": message,
+                        "messages": [m.model_dump() for m in session.messages],
+                        "session_id": session.session_id,
+                    }
+                )
+                
+                # Process hook results (should be merged by ExtensionRuntime)
+                if hook_results:
+                    for result in hook_results:
+                        if isinstance(result, dict):
+                            # Handle prependContext
+                            if result.get("prependContext"):
+                                prepend_text = result["prependContext"]
+                                # Prepend to the user message we just added
+                                if session.messages and session.messages[-1].role == "user":
+                                    original_content = session.messages[-1].content
+                                    session.messages[-1].content = f"{prepend_text}\n\n{original_content}"
+                                    logger.info(
+                                        f"🧠 Prepended context to prompt "
+                                        f"({len(prepend_text)} chars)"
+                                    )
+                            
+                            # Handle systemPrompt modification
+                            if result.get("systemPrompt"):
+                                # Update system prompt if provided
+                                new_system_prompt = result["systemPrompt"]
+                                if session.messages and session.messages[0].role == "system":
+                                    session.messages[0].content = new_system_prompt
+                                    logger.info("🔧 System prompt modified by extension")
+            except Exception as e:
+                logger.warning(f"before_agent_start hook failed: {e}")
 
         # Check context window and compact if needed
         if self.compaction_manager and self.enable_context_management:
@@ -426,6 +469,8 @@ class MultiProviderRuntime:
         # Execute with retry logic and failover
         retry_count = 0
         thinking_state = {}  # State for streaming thinking extraction
+        initial_text = ""  # Store initial assistant text (before tool calls)
+        initial_tool_calls = []  # Store tool calls for merging with final response
 
         while retry_count <= self.max_retries:
             try:
@@ -485,16 +530,87 @@ class MultiProviderRuntime:
                 else:
                     messages_to_send = all_messages
                 
-                llm_messages = []
-                for i, msg in enumerate(messages_to_send):
-                    msg_images = None
-                    
-                    # ONLY attach images to the LAST message (current turn)
-                    if i == len(messages_to_send) - 1 and images_to_use:
-                        msg_images = images_to_use
-                    
-                    # Historical messages: no images
-                    llm_messages.append(LLMMessage(role=msg.role, content=msg.content, images=msg_images))
+                # Apply transformContext hook (openclaw-ts alignment)
+                # Allows pruning, filtering, or modifying messages before conversion
+                if self.transform_context_hook:
+                    try:
+                        messages_to_send = await self.transform_context_hook(messages_to_send)
+                        logger.debug(
+                            f"Applied transform_context_hook: {len(all_messages)} -> {len(messages_to_send)} messages"
+                        )
+                    except Exception as e:
+                        logger.warning(f"transform_context_hook failed: {e}, using original messages")
+                
+                # Fix Gemini message sequence (if using Gemini)
+                if self.provider_name == "gemini" or self.provider_name == "google":
+                    try:
+                        from .gemini_message_fixer import fix_gemini_message_sequence, validate_gemini_sequence
+                        
+                        # Convert messages to dict format for validation
+                        msgs_dict = []
+                        for msg in messages_to_send:
+                            msg_dict = {
+                                "role": msg.role,
+                                "content": msg.content,
+                            }
+                            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                msg_dict["tool_calls"] = msg.tool_calls
+                            if hasattr(msg, 'tool_call_id') and msg.tool_call_id:
+                                msg_dict["tool_call_id"] = msg.tool_call_id
+                            msgs_dict.append(msg_dict)
+                        
+                        # Validate and fix if needed
+                        is_valid, error_msg = validate_gemini_sequence(msgs_dict)
+                        if not is_valid:
+                            logger.warning(f"⚠️ Invalid Gemini sequence: {error_msg}, attempting to fix")
+                            fixed_msgs = fix_gemini_message_sequence(msgs_dict)
+                            
+                            # Convert back to Message objects
+                            from .session import Message
+                            messages_to_send = [
+                                Message(
+                                    role=m["role"],
+                                    content=m.get("content", ""),
+                                    tool_calls=m.get("tool_calls"),
+                                    tool_call_id=m.get("tool_call_id"),
+                                )
+                                for m in fixed_msgs
+                            ]
+                            logger.info(f"✅ Fixed Gemini sequence: {len(msgs_dict)} -> {len(messages_to_send)} messages")
+                    except Exception as fix_err:
+                        logger.warning(f"Failed to fix Gemini sequence: {fix_err}")
+                
+                # Apply convertToLlm hook (openclaw-ts alignment)
+                # Converts custom message types to LLM-compatible format
+                if self.convert_to_llm_hook:
+                    try:
+                        llm_messages = await self.convert_to_llm_hook(messages_to_send, images_to_use)
+                        logger.debug(
+                            f"Applied convert_to_llm_hook: converted {len(messages_to_send)} messages"
+                        )
+                    except Exception as e:
+                        logger.error(f"convert_to_llm_hook failed: {e}")
+                        raise
+                else:
+                    # Default conversion: session messages to LLM format
+                    llm_messages = []
+                    for i, msg in enumerate(messages_to_send):
+                        msg_images = None
+                        
+                        # ONLY attach images to the LAST message (current turn)
+                        if i == len(messages_to_send) - 1 and images_to_use:
+                            msg_images = images_to_use
+                        
+                        # Historical messages: no images
+                        # CRITICAL FIX: Pass tool_calls, tool_call_id, and name from session messages
+                        llm_messages.append(LLMMessage(
+                            role=msg.role, 
+                            content=msg.content, 
+                            images=msg_images,
+                            tool_calls=getattr(msg, 'tool_calls', None),
+                            tool_call_id=getattr(msg, 'tool_call_id', None),
+                            name=getattr(msg, 'name', None)
+                        ))
                 
                 # DEBUG: Log message count and content
                 logger.info(f"📝 Sending {len(llm_messages)} message(s) to provider")
@@ -532,6 +648,7 @@ class MultiProviderRuntime:
                 accumulated_text = ""
                 accumulated_thinking = ""
                 tool_calls = []
+                tool_results_to_add = []  # Store tool results to add after assistant message
                 needs_tool_response = False
 
                 async for response in self.provider.stream(
@@ -583,12 +700,29 @@ class MultiProviderRuntime:
 
                     elif response.type == "tool_call":
                         tool_calls = response.tool_calls or []
+                        
+                        # Store tool results to add AFTER assistant message
+                        tool_results_to_add = []
 
                         # Execute tools
                         for tc in tool_calls:
                             tool = next((t for t in tools if t.name == tc["name"]), None)
                             if tool:
-                                # Format tool use
+                                # Emit TOOL_EXECUTION_START event (pi-mono alignment)
+                                start_event = Event(
+                                    type=EventType.TOOL_EXECUTION_START,
+                                    source="agent-runtime",
+                                    session_id=session.session_id if session else None,
+                                    data={
+                                        "tool_call_id": tc["id"],
+                                        "tool_name": tc["name"],
+                                        "args": tc["arguments"],
+                                    },
+                                )
+                                await self._notify_observers(start_event)
+                                yield start_event
+                                
+                                # Format tool use (legacy event)
                                 formatted_use = self.tool_formatter.format_tool_use(
                                     tc["name"], tc["arguments"]
                                 )
@@ -606,9 +740,71 @@ class MultiProviderRuntime:
 
                                 # Execute tool
                                 try:
-                                    result = await tool.execute(tc["arguments"])
-                                    success = result.success if result else False
-                                    output = result.content if result else "No output"
+                                    # Note: Steering messages support (pi-mono alignment) can be added later
+                                    # when get_steering_messages callback is implemented in callers
+                                    
+                                    # Create cancellation signal
+                                    cancel_signal = asyncio.Event()
+                                    
+                                    # Define streaming update callback
+                                    def handle_tool_update(update_result):
+                                        """Handle tool streaming updates"""
+                                        # Emit intermediate update event
+                                        update_event = Event(
+                                            type=EventType.TOOL_EXECUTION_UPDATE,
+                                            source="agent-runtime",
+                                            session_id=session.session_id if session else None,
+                                            data={
+                                                "tool_call_id": tc["id"],
+                                                "tool_name": tc["name"],
+                                                "partial_result": {
+                                                    "content": [c.model_dump() if hasattr(c, 'model_dump') else str(c) for c in update_result.content],
+                                                    "details": update_result.details,
+                                                },
+                                            },
+                                        )
+                                        # Async notify (non-blocking)
+                                        asyncio.create_task(self._notify_observers(update_event))
+                                    
+                                    # Check if tool supports new interface (has execute with 4 params)
+                                    # Try new interface first
+                                    try:
+                                        from inspect import signature
+                                        sig = signature(tool.execute)
+                                        param_count = len([p for p in sig.parameters.values() if p.default == p.empty])
+                                        
+                                        if param_count >= 3:  # new interface: tool_call_id, params, signal, on_update
+                                            result = await tool.execute(
+                                                tool_call_id=tc["id"],
+                                                params=tc["arguments"],
+                                                signal=cancel_signal,
+                                                on_update=handle_tool_update,
+                                            )
+                                        else:
+                                            # Legacy interface
+                                            result = await tool.execute(tc["arguments"])
+                                    except Exception:
+                                        # Fallback to legacy interface
+                                        result = await tool.execute(tc["arguments"])
+                                    
+                                    # Handle AgentToolResult vs LegacyToolResult
+                                    from .types import AgentToolResult
+                                    if isinstance(result, AgentToolResult):
+                                        success = True
+                                        # Merge content into text
+                                        # CRITICAL FIX: Ensure result.content is not None and is iterable
+                                        content_list = result.content if result.content else []
+                                        output = "\n".join(
+                                            c.text if hasattr(c, 'text') else str(c)
+                                            for c in content_list
+                                        ) or "No output"  # Ensure never empty string
+                                        result_metadata = result.details or {}
+                                    else:
+                                        # Legacy ToolResult
+                                        success = result.success if result else False
+                                        # CRITICAL FIX: Ensure output is never None
+                                        output = (result.content if result else None) or "No output"
+                                        result_metadata = result.metadata if hasattr(result, 'metadata') else {}
 
                                     # Format tool result
                                     formatted_result = self.tool_formatter.format_tool_result(
@@ -628,44 +824,78 @@ class MultiProviderRuntime:
                                     yield event
 
                                     # Check if tool generated a file (e.g., PPT, PDF, image)
-                                    # Try to parse output as JSON if it looks like file info
-                                    file_info = None
-                                    if success and isinstance(output, str):
-                                        try:
-                                            import json
-                                            parsed = json.loads(output)
-                                            if isinstance(parsed, dict) and "file_path" in parsed:
-                                                file_info = parsed
-                                        except (json.JSONDecodeError, ValueError):
-                                            pass
-                                    elif success and isinstance(output, dict) and "file_path" in output:
-                                        file_info = output
+                                    # Check both content (JSON string) and metadata
+                                    file_path = None
+                                    file_type = "document"
+                                    caption = None
                                     
-                                    if file_info:
-                                        from pathlib import Path
-                                        file_path = file_info["file_path"]
+                                    if success:
+                                        # 1. Try to parse output as JSON
+                                        if isinstance(output, str):
+                                            try:
+                                                import json
+                                                parsed = json.loads(output)
+                                                if isinstance(parsed, dict):
+                                                    file_path = parsed.get("file_path") or parsed.get("path")
+                                                    file_type = parsed.get("file_type", "document")
+                                                    caption = parsed.get("caption")
+                                            except (json.JSONDecodeError, ValueError):
+                                                pass
+                                        elif isinstance(output, dict):
+                                            file_path = output.get("file_path") or output.get("path")
+                                            file_type = output.get("file_type", "document")
+                                            caption = output.get("caption")
                                         
-                                        if Path(file_path).exists():
+                                        # 2. Check metadata if not found in content
+                                        if not file_path and result_metadata:
+                                            file_path = result_metadata.get("file_path") or result_metadata.get("path")
+                                            file_type = result_metadata.get("file_type", "document")
+                                            caption = result_metadata.get("caption")
+                                    
+                                    if file_path:
+                                        from pathlib import Path
+                                        file_path_obj = Path(file_path)
+                                        
+                                        if file_path_obj.exists():
                                             # Emit file generated event
                                             file_event = Event(
                                                 type=EventType.AGENT_FILE_GENERATED,
                                                 source="agent-runtime",
                                                 session_id=session.session_id if session else None,
                                                 data={
-                                                    "file_path": file_path,
-                                                    "file_type": file_info.get("file_type", "document"),
-                                                    "file_name": Path(file_path).name,
-                                                    "caption": file_info.get("caption", Path(file_path).stem),
+                                                    "file_path": str(file_path_obj),
+                                                    "file_type": file_type,
+                                                    "file_name": file_path_obj.name,
+                                                    "caption": caption or file_path_obj.stem,
                                                 },
                                             )
                                             await self._notify_observers(file_event)
                                             yield file_event
-                                            logger.info(f"📎 File generated and event emitted: {Path(file_path).name}")
+                                            logger.info(f"📎 File generated and event emitted: {file_path_obj.name}")
 
-                                    # Add tool result to session
-                                    session.add_tool_message(
-                                        tool_call_id=tc["id"], content=output, name=tc["name"]
+                                    # Store tool result to add later (after assistant message)
+                                    tool_results_to_add.append({
+                                        "tool_call_id": tc["id"],
+                                        "content": output,
+                                        "name": tc["name"],
+                                        "success": success
+                                    })
+                                    
+                                    # Emit TOOL_EXECUTION_END event (success)
+                                    end_event = Event(
+                                        type=EventType.TOOL_EXECUTION_END,
+                                        source="agent-runtime",
+                                        session_id=session.session_id if session else None,
+                                        data={
+                                            "tool_call_id": tc["id"],
+                                            "tool_name": tc["name"],
+                                            "result": output,
+                                            "success": success,
+                                            "is_error": False,
+                                        },
                                     )
+                                    await self._notify_observers(end_event)
+                                    yield end_event
 
                                 except Exception as tool_error:
                                     error_msg = str(tool_error)
@@ -686,17 +916,36 @@ class MultiProviderRuntime:
                                     await self._notify_observers(event)
                                     yield event
 
-                                    session.add_tool_message(
-                                        tool_call_id=tc["id"],
-                                        content=f"Error: {error_msg}",
-                                        name=tc["name"],
+                                    # Store error result to add later
+                                    tool_results_to_add.append({
+                                        "tool_call_id": tc["id"],
+                                        "content": f"Error: {error_msg}",
+                                        "name": tc["name"],
+                                        "success": False
+                                    })
+                                    
+                                    # Emit TOOL_EXECUTION_END event (error)
+                                    end_event = Event(
+                                        type=EventType.TOOL_EXECUTION_END,
+                                        source="agent-runtime",
+                                        session_id=session.session_id if session else None,
+                                        data={
+                                            "tool_call_id": tc["id"],
+                                            "tool_name": tc["name"],
+                                            "result": error_msg,
+                                            "success": False,
+                                            "is_error": True,
+                                            "error": error_msg,
+                                        },
                                     )
+                                    await self._notify_observers(end_event)
+                                    yield end_event
 
                     elif response.type == "done":
                         # Extract thinking if ON mode
-                        final_text = accumulated_text
+                        final_text = accumulated_text or ""  # Ensure never None
                         if self.thinking_mode == ThinkingMode.ON and self.thinking_extractor:
-                            extracted = self.thinking_extractor.extract(accumulated_text)
+                            extracted = self.thinking_extractor.extract(accumulated_text or "")
                             if extracted.has_thinking:
                                 # Include thinking in response
                                 event = AgentEvent(
@@ -704,19 +953,37 @@ class MultiProviderRuntime:
                                 )
                                 await self._notify_observers(event)
                                 yield event
-                                final_text = extracted.content
+                                # CRITICAL FIX: Ensure extracted.content is never None
+                                final_text = extracted.content or ""
 
-                        # Save assistant message
-                        if final_text or tool_calls:
-                            session.add_assistant_message(final_text, tool_calls)
+                        # Add tool results to session FIRST (before assistant message)
+                        if tool_results_to_add:
+                            logger.debug(f"Adding {len(tool_results_to_add)} tool results to session")
+                            for tr in tool_results_to_add:
+                                session.add_tool_message(
+                                    tool_call_id=tr["tool_call_id"],
+                                    content=tr["content"],
+                                    name=tr["name"]
+                                )
 
                         # If there were tool calls, we need to continue the conversation
                         # to let the model generate a response based on tool results
                         if tool_calls:
                             logger.info(f"Tool calls completed, will request final response from model")
                             needs_tool_response = True
+                            # Store the initial text and tool_calls for later merging
+                            initial_text = final_text
+                            initial_tool_calls = tool_calls
+                            # Don't add assistant message yet - wait for final response
                             # Don't break yet - we'll make another API call after this loop
                         else:
+                            # No tool calls - add assistant message now
+                            # CRITICAL FIX: Ensure content is never None, even if empty
+                            final_text_safe = final_text or ""
+                            if final_text_safe or tool_calls:
+                                session.add_assistant_message(final_text_safe, tool_calls)
+                                logger.debug(f"Added assistant message to session (text={len(final_text_safe)} chars, tool_calls={len(tool_calls)})")
+                            
                             # Record success for failover manager
                             if self.fallback_manager:
                                 self.fallback_manager.record_success(current_model)
@@ -734,14 +1001,20 @@ class MultiProviderRuntime:
                     llm_messages = []
                     for msg in session.get_messages():
                         msg_images = getattr(msg, 'images', None)
-                        llm_messages.append(LLMMessage(role=msg.role, content=msg.content, images=msg_images))
+                        # CRITICAL FIX: Pass tool_calls, tool_call_id, and name from session messages
+                        llm_messages.append(LLMMessage(
+                            role=msg.role, 
+                            content=msg.content, 
+                            images=msg_images,
+                            tool_calls=getattr(msg, 'tool_calls', None),
+                            tool_call_id=getattr(msg, 'tool_call_id', None),
+                            name=getattr(msg, 'name', None)
+                        ))
                     
-                    # Add explicit instruction to NOT use tools
-                    # This is a workaround for Gemini's AFC (Automatic Function Calling)
-                    llm_messages.append(LLMMessage(
-                        role="user",
-                        content="Based on the tool results above, please provide a natural language response to the user. Do NOT call any more tools."
-                    ))
+                    # REMOVED WORKAROUND: Do NOT add extra user message
+                    # Gemini requires: function_call -> function_response -> model_response
+                    # Adding extra user message breaks this sequence
+                    # Instead, pass empty tools array to disable further tool calling
                     
                     # Reset for second response
                     accumulated_text = ""
@@ -749,12 +1022,15 @@ class MultiProviderRuntime:
                     
                     # Stream the final response WITHOUT tools (to prevent infinite loop)
                     # The model should now generate a text response based on tool results
-                    # IMPORTANT: Pass empty list [] instead of None to truly disable tools
+                    # IMPORTANT: Disable ALL tools including Google Search
+                    # Create a copy of extra_params without enable_search
+                    final_response_params = {k: v for k, v in self.extra_params.items() if k != 'enable_search'}
+                    
                     async for response in self.provider.stream(
                         messages=llm_messages, 
                         tools=[], 
                         max_tokens=max_tokens,
-                        **self.extra_params  # Pass enable_search and other params
+                        **final_response_params  # Pass params WITHOUT enable_search
                     ):
                         if response.type == "text_delta":
                             text = response.content
@@ -771,9 +1047,14 @@ class MultiProviderRuntime:
                             yield event
                             
                         elif response.type == "done":
-                            # Save final response
-                            if accumulated_text:
-                                session.add_assistant_message(accumulated_text, [])
+                            # CRITICAL FIX: Merge initial tool_calls with final text into ONE message
+                            # This prevents two consecutive assistant messages
+                            final_response_text = accumulated_text or ""  # Ensure never None
+                            final_tool_calls = initial_tool_calls if needs_tool_response else []
+                            
+                            # Add single assistant message with both tool_calls and final text
+                            session.add_assistant_message(final_response_text, final_tool_calls)
+                            logger.debug(f"Added complete assistant message (text={len(final_response_text)} chars, tool_calls={len(final_tool_calls)})")
                             break
                             
                         elif response.type == "error":

@@ -10,6 +10,20 @@ from .loader import ExtensionLoader, discover_extensions
 from .runner import ExtensionRunner
 from .runtime import ExtensionRuntime
 from .types import Extension, ExtensionContext, ExtensionManifest
+from .memory_extension import MemoryExtension, create_memory_extension
+
+__all__ = [
+    "ExtensionAPI",
+    "ExtensionLoader",
+    "ExtensionRunner", 
+    "ExtensionRuntime",
+    "Extension",
+    "ExtensionContext",
+    "ExtensionManifest",
+    "discover_extensions",
+    "MemoryExtension",
+    "create_memory_extension",
+]
 
 __all__ = [
     "Extension",

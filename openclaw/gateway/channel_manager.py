@@ -141,6 +141,7 @@ class ChannelManager:
         session_manager: Any = None,
         tools: list | None = None,
         system_prompt: str | None = None,
+        workspace_dir: Path | None = None,
     ):
         """
         Initialize ChannelManager
@@ -150,11 +151,15 @@ class ChannelManager:
             session_manager: Session manager for creating/retrieving sessions
             tools: List of tools available to the agent
             system_prompt: Optional system prompt (skills, capabilities, etc.)
+            workspace_dir: Workspace directory for bootstrap files
         """
         self.default_runtime = default_runtime
         self.session_manager = session_manager
         self.tools = tools or []
-        self.system_prompt = system_prompt
+        self.workspace_dir = workspace_dir or Path.home() / ".openclaw" / "workspace"
+        
+        # Load bootstrap files and build complete system prompt
+        self.system_prompt = self._build_system_prompt_with_bootstrap(system_prompt)
 
         # Channel plugin classes (for lazy instantiation)
         self._channel_classes: dict[str, type[ChannelPlugin]] = {}
@@ -173,6 +178,67 @@ class ChannelManager:
 
         logger.info("ChannelManager initialized")
 
+    def _build_system_prompt_with_bootstrap(self, base_prompt: str | None = None) -> str:
+        """
+        Build complete system prompt with bootstrap files injected.
+        
+        Matches TypeScript behavior: loads SOUL.md, IDENTITY.md, BOOTSTRAP.md, etc.
+        and injects them into the system prompt.
+        
+        Args:
+            base_prompt: Base system prompt (if any)
+            
+        Returns:
+            Complete system prompt with bootstrap files
+        """
+        try:
+            from ..agents.system_prompt_bootstrap import (
+                load_bootstrap_files, 
+                format_bootstrap_context, 
+                format_bootstrap_context_string
+            )
+            from ..agents.system_prompt import build_agent_system_prompt
+            
+            # Load bootstrap files from workspace
+            bootstrap_files = load_bootstrap_files(self.workspace_dir)
+            logger.info(f"Loaded {len(bootstrap_files)} bootstrap files from {self.workspace_dir}")
+            
+            # Format as string for injection
+            bootstrap_context = format_bootstrap_context_string(bootstrap_files)
+            
+            # If there's a base prompt, append bootstrap context
+            if base_prompt:
+                if bootstrap_context:
+                    return f"{base_prompt}\n\n{bootstrap_context}"
+                return base_prompt
+            
+            # Otherwise, build complete system prompt with bootstrap files
+            tool_names = [tool.name for tool in self.tools] if self.tools else []
+            
+            # Build complete system prompt
+            system_prompt = build_agent_system_prompt(
+                workspace_dir=self.workspace_dir,
+                tool_names=tool_names,
+                prompt_mode="full",
+                runtime_info={
+                    "agent_id": "main",
+                    "channel": "gateway",
+                    "model": "unknown"
+                },
+                context_files=format_bootstrap_context([
+                    bf for bf in bootstrap_files
+                    if "(File" not in bf.content
+                ]) if bootstrap_files else None,
+            )
+            
+            logger.info(f"Built system prompt with bootstrap files ({len(system_prompt)} chars)")
+            return system_prompt
+            
+        except Exception as e:
+            logger.error(f"Failed to build system prompt with bootstrap: {e}", exc_info=True)
+            # Fallback to base prompt or default
+            return base_prompt or "You are a personal assistant running inside OpenClaw."
+    
     # =========================================================================
     # Registration
     # =========================================================================

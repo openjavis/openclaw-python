@@ -76,7 +76,9 @@ class AgentOptions:
     get_api_key: Callable[[str], Awaitable[str | None]] | None = None
     thinking_budgets: dict[str, int] | None = None
     convert_to_llm: Callable[[list[AgentMessage]], list[LLMMessage]] | None = None
-    transform_context: Callable[[list[LLMMessage]], list[LLMMessage]] | None = None
+    # CRITICAL: transform_context operates on AgentMessage[], NOT LLMMessage[]
+    # This is aligned with pi-mono where transformContext comes BEFORE convertToLlm
+    transform_context: Callable[[list[AgentMessage]], Awaitable[list[AgentMessage]] | list[AgentMessage]] | None = None
     steering_mode: Literal["all", "one-at-a-time"] = "one-at-a-time"
     follow_up_mode: Literal["all", "one-at-a-time"] = "one-at-a-time"
 
@@ -119,9 +121,12 @@ def default_convert_to_llm(messages: list[AgentMessage]) -> list[LLMMessage]:
     return llm_messages
 
 
-def default_transform_context(messages: list[LLMMessage]) -> list[LLMMessage]:
+def default_transform_context(messages: list[AgentMessage]) -> list[AgentMessage]:
     """
     Default context transformation for context window management.
+    
+    This operates on AgentMessage[] BEFORE conversion to LLMMessage[].
+    This allows injecting, pruning, or modifying messages before LLM sees them.
     
     Can be overridden to implement:
     - Context pruning (remove old messages)
@@ -131,10 +136,10 @@ def default_transform_context(messages: list[LLMMessage]) -> list[LLMMessage]:
     Matches TypeScript transformContext behavior.
     
     Args:
-        messages: List of LLMMessage objects
+        messages: List of AgentMessage objects
         
     Returns:
-        Transformed list of messages
+        Transformed list of AgentMessage objects
     """
     # Default: return messages as-is
     # Override this in AgentOptions to implement custom context management
@@ -261,8 +266,17 @@ class AgentLoop:
             raise
     
     async def run_loop(self) -> None:
-        """Main execution loop with mode support"""
+        """
+        Main execution loop with double-loop architecture - aligned with pi-mono
         
+        Outer loop: Continues when follow-up messages arrive
+        Inner loop: Process tool calls and steering messages
+        """
+        first_turn = True
+        # Check for steering messages at start (user may have typed while waiting)
+        pending_messages: list[AgentMessage] = await self._get_steering_messages()
+        
+        # Outer loop: continues when queued follow-up messages arrive after agent would stop
         while True:
             # Check for abort signal
             try:
@@ -271,83 +285,80 @@ class AgentLoop:
                 logger.info("Agent loop aborted")
                 break
             
-            # Check for steering messages (interrupts)
-            if self.state.steering_queue:
-                # Process steering based on mode
-                if self.options.steering_mode == "all":
-                    # Process all steering messages at once
-                    while self.state.steering_queue:
-                        steering_msg = self.state.steering_queue.pop(0)
-                        self.state.messages.append(AgentMessage(
-                            role="user",
-                            content=steering_msg
-                        ))
-                    logger.info("Processing all steering messages")
-                else:
-                    # One at a time (default)
-                    steering_msg = self.state.steering_queue.pop(0)
-                    self.state.messages.append(AgentMessage(
-                        role="user",
-                        content=steering_msg
+            has_more_tool_calls = True
+            steering_after_tools: list[AgentMessage] | None = None
+            
+            # Inner loop: process tool calls and steering messages
+            while has_more_tool_calls or pending_messages:
+                if not first_turn:
+                    # Emit turn start
+                    self.state.turn_number += 1
+                    await self.event_emitter.emit(TurnStartEvent(
+                        turn_number=self.state.turn_number
                     ))
-                    logger.info("Processing steering message")
-                continue
-            
-            # Increment turn
-            self.state.turn_number += 1
-            
-            # Emit turn start
-            await self.event_emitter.emit(TurnStartEvent(
-                turn_number=self.state.turn_number
-            ))
-            
-            # Stream assistant response
-            assistant_message, tool_calls = await self.stream_assistant_response()
-            
-            # Add assistant message to context
-            self.state.messages.append(assistant_message)
-            
-            # Clear streaming state
-            self.state.is_streaming = False
-            self.state.stream_message = None
-            
-            # Emit turn end
-            await self.event_emitter.emit(TurnEndEvent(
-                turn_number=self.state.turn_number,
-                has_tool_calls=len(tool_calls) > 0
-            ))
-            
-            # If no tool calls, we're done
-            if not tool_calls:
-                break
-            
-            # Store pending tool calls
-            self.state.pending_tool_calls = tool_calls
-            
-            # Execute tool calls
-            await self.execute_tool_calls(tool_calls)
-            
-            # Clear pending tool calls
-            self.state.pending_tool_calls = []
-            
-            # Check for follow-up messages
-            if self.state.followup_queue:
-                # Process follow-up based on mode
-                if self.options.follow_up_mode == "all":
-                    # Process all follow-up messages at once
-                    while self.state.followup_queue:
-                        followup_msg = self.state.followup_queue.pop(0)
-                        self.state.messages.append(AgentMessage(
-                            role="user",
-                            content=followup_msg
-                        ))
                 else:
-                    # One at a time (default)
-                    followup_msg = self.state.followup_queue.pop(0)
-                    self.state.messages.append(AgentMessage(
-                        role="user",
-                        content=followup_msg
-                    ))
+                    first_turn = False
+                
+                # Process pending messages (inject before next assistant response)
+                if pending_messages:
+                    for message in pending_messages:
+                        self.state.messages.append(message)
+                    logger.info(f"Processing {len(pending_messages)} pending messages")
+                    pending_messages = []
+                
+                # Stream assistant response
+                assistant_message, tool_calls = await self.stream_assistant_response()
+                
+                # Add assistant message to context
+                self.state.messages.append(assistant_message)
+                
+                # Clear streaming state
+                self.state.is_streaming = False
+                self.state.stream_message = None
+                
+                # Check for tool calls
+                has_more_tool_calls = len(tool_calls) > 0
+                
+                # Execute tool calls if any (may return steering messages that interrupt)
+                if has_more_tool_calls:
+                    # Store pending tool calls
+                    self.state.pending_tool_calls = tool_calls
+                    
+                    # Execute tool calls - may return steering messages
+                    tool_results, steering_messages = await self.execute_tool_calls_with_steering(tool_calls)
+                    
+                    # Add tool results to context
+                    for result in tool_results:
+                        self.state.messages.append(result)
+                    
+                    # Clear pending tool calls
+                    self.state.pending_tool_calls = []
+                    
+                    # Store steering messages if any
+                    steering_after_tools = steering_messages
+                
+                # Emit turn end
+                await self.event_emitter.emit(TurnEndEvent(
+                    turn_number=self.state.turn_number,
+                    has_tool_calls=has_more_tool_calls
+                ))
+                
+                # Get steering messages after turn completes
+                if steering_after_tools:
+                    pending_messages = steering_after_tools
+                    steering_after_tools = None
+                else:
+                    pending_messages = await self._get_steering_messages()
+            
+            # Agent would stop here. Check for follow-up messages.
+            followup_messages = await self._get_followup_messages()
+            if followup_messages:
+                # Set as pending so inner loop processes them
+                pending_messages = followup_messages
+                continue  # Continue outer loop
+            
+            # No more messages, exit
+            break
     
     async def stream_assistant_response(self) -> tuple[AgentMessage, list[dict[str, Any]]]:
         """
@@ -375,13 +386,22 @@ class AgentLoop:
         in_thinking = False
         
         try:
-            # Convert messages using conversion hook
-            convert_fn = self.options.convert_to_llm or default_convert_to_llm
-            llm_messages = convert_fn(self.state.messages)
+            # Step 1: Apply context transform FIRST (AgentMessage[] → AgentMessage[])
+            # This allows injecting/pruning messages before LLM conversion
+            # Aligned with pi-mono: transformContext comes BEFORE convertToLlm
+            messages = self.state.messages
+            if self.options.transform_context:
+                # Note: transform_context should work on AgentMessage[], not LLMMessage[]
+                # This is a signature change from current implementation
+                if asyncio.iscoroutinefunction(self.options.transform_context):
+                    messages = await self.options.transform_context(messages)
+                else:
+                    # Fallback for sync transform (backward compat)
+                    messages = self.options.transform_context(messages)
             
-            # Transform context using transformation hook
-            transform_fn = self.options.transform_context or default_transform_context
-            llm_messages = transform_fn(llm_messages)
+            # Step 2: Convert to LLM-compatible messages SECOND (AgentMessage[] → LLMMessage[])
+            convert_fn = self.options.convert_to_llm or default_convert_to_llm
+            llm_messages = convert_fn(messages)
             
             # Stream from provider
             async for response in self.provider.stream(
@@ -485,19 +505,24 @@ class AgentLoop:
         
         return assistant_message, tool_calls
     
-    async def execute_tool_calls(self, tool_calls: list[dict[str, Any]]) -> None:
+    async def execute_tool_calls_with_steering(
+        self, 
+        tool_calls: list[dict[str, Any]]
+    ) -> tuple[list[AgentMessage], list[AgentMessage] | None]:
         """
-        Execute tool calls sequentially with progress tracking
+        Execute tool calls sequentially, checking for steering after each - aligned with pi-mono
         
         Args:
             tool_calls: List of tool calls to execute
-        """
-        for tool_call in tool_calls:
-            # Check for steering before each tool
-            if self.state.steering_queue:
-                logger.info("Steering detected, stopping tool execution")
-                break
             
+        Returns:
+            Tuple of (tool_results, steering_messages)
+            - tool_results: List of tool result messages
+            - steering_messages: Steering messages if detected, None otherwise
+        """
+        tool_results: list[AgentMessage] = []
+        
+        for tool_call in tool_calls:
             tool_call_id = tool_call["id"]
             tool_name = tool_call["name"]
             params = tool_call.get("params", {})
@@ -533,8 +558,8 @@ class AgentLoop:
                         error=error_msg
                     ))
                     
-                    # Add error result to messages
-                    self.state.messages.append(AgentMessage(
+                    # Add error result
+                    tool_results.append(AgentMessage(
                         role="toolResult",
                         tool_call_id=tool_call_id,
                         content=f"Error: {error_msg}"
@@ -555,9 +580,9 @@ class AgentLoop:
                     error=result.error if not result.success else None
                 ))
                 
-                # Add result to messages
+                # Add result
                 result_content = result.content if result.success else f"Error: {result.error}"
-                self.state.messages.append(AgentMessage(
+                tool_results.append(AgentMessage(
                     role="toolResult",
                     tool_call_id=tool_call_id,
                     content=result_content
@@ -575,11 +600,70 @@ class AgentLoop:
                 ))
                 
                 # Add error result
-                self.state.messages.append(AgentMessage(
+                tool_results.append(AgentMessage(
                     role="toolResult",
                     tool_call_id=tool_call_id,
                     content=f"Error: {error_msg}"
                 ))
+            
+            # CRITICAL: Check for steering AFTER each tool execution (not before)
+            # This matches pi-mono behavior and allows interrupting remaining tools
+            steering = await self._get_steering_messages()
+            if steering:
+                logger.info(f"Steering detected after tool {tool_name}, skipping remaining tools")
+                return tool_results, steering
+        
+        return tool_results, None
+    
+    async def _get_steering_messages(self) -> list[AgentMessage]:
+        """
+        Get steering messages from queue - aligned with pi-mono
+        
+        Returns:
+            List of steering messages (empty if none)
+        """
+        if not self.state.steering_queue:
+            return []
+        
+        messages = []
+        
+        if self.options.steering_mode == "all":
+            # Process all steering messages at once
+            while self.state.steering_queue:
+                msg_content = self.state.steering_queue.pop(0)
+                messages.append(AgentMessage(role="user", content=msg_content))
+        else:
+            # One at a time (default)
+            if self.state.steering_queue:
+                msg_content = self.state.steering_queue.pop(0)
+                messages.append(AgentMessage(role="user", content=msg_content))
+        
+        return messages
+    
+    async def _get_followup_messages(self) -> list[AgentMessage]:
+        """
+        Get follow-up messages from queue - aligned with pi-mono
+        
+        Returns:
+            List of follow-up messages (empty if none)
+        """
+        if not self.state.followup_queue:
+            return []
+        
+        messages = []
+        
+        if self.options.follow_up_mode == "all":
+            # Process all follow-up messages at once
+            while self.state.followup_queue:
+                msg_content = self.state.followup_queue.pop(0)
+                messages.append(AgentMessage(role="user", content=msg_content))
+        else:
+            # One at a time (default)
+            if self.state.followup_queue:
+                msg_content = self.state.followup_queue.pop(0)
+                messages.append(AgentMessage(role="user", content=msg_content))
+        
+        return messages
     
     def steer(self, message: str) -> None:
         """

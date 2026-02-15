@@ -24,6 +24,10 @@ class LoadedMedia:
     file_name: Optional[str] = None
 
 
+# Alias for backward compatibility
+MediaResult = LoadedMedia
+
+
 async def load_web_media(url_or_path: str, max_bytes: Optional[int] = None) -> LoadedMedia:
     """Load media from URL or local file path.
 

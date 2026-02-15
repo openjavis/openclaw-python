@@ -23,9 +23,11 @@ class ExtensionManifest:
 @dataclass
 class ExtensionContext:
     """Context passed to extensions"""
-    extension_dir: Path
-    agent_id: str
+    extension_dir: Path | None = None
+    agent_id: str = "main"
     session_id: str | None = None
+    workspace_dir: str | None = None  # Added for memory extension compatibility
+    logger: Any | None = None  # Added for logging support
     config: dict[str, Any] = field(default_factory=dict)
 
 

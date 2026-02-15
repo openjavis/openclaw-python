@@ -66,6 +66,7 @@ class TelegramChannel(ChannelPlugin):
         self._app.add_handler(CommandHandler("start", self._handle_start_command))
         self._app.add_handler(CommandHandler("help", self._handle_help_command))
         self._app.add_handler(CommandHandler("new", self._handle_new_command))
+        self._app.add_handler(CommandHandler("reset", self._handle_reset_command))
         self._app.add_handler(CommandHandler("status", self._handle_status_command))
         self._app.add_handler(CommandHandler("model", self._handle_model_command))
         
@@ -525,6 +526,37 @@ class TelegramChannel(ChannelPlugin):
         chat = message.chat
         sender = message.from_user
 
+        # Determine chat type first
+        is_group = chat.type in ["group", "supergroup"]
+        is_dm = not is_group
+        
+        # DM Access Control - Check dm_policy for direct messages
+        if is_dm and self._config:
+            dm_policy = self._config.get("dmPolicy") or self._config.get("dm_policy") or "pairing"
+            
+            # Handle disabled DM
+            if dm_policy == "disabled":
+                logger.info(f"DM from {sender.id} blocked by dm_policy=disabled")
+                return
+            
+            # Handle pairing and allowlist modes
+            if dm_policy in ["pairing", "allowlist"]:
+                # Check if sender is allowed
+                is_allowed = await self._check_sender_allowed(
+                    sender_id=str(sender.id),
+                    username=sender.username,
+                    dm_policy=dm_policy
+                )
+                
+                if not is_allowed:
+                    # For pairing mode, create pairing request
+                    if dm_policy == "pairing":
+                        await self._handle_pairing_request(sender, chat, context)
+                    else:
+                        # For allowlist mode, just ignore
+                        logger.info(f"DM from {sender.id} blocked by dm_policy={dm_policy}")
+                    return
+
         # Check for chat commands
         if self._command_parser:
             command = self._command_parser.parse(message.text)
@@ -581,20 +613,33 @@ class TelegramChannel(ChannelPlugin):
         await self._handle_message(inbound)
 
     async def _register_bot_commands(self):
-        """Register bot commands with Telegram"""
+        """Register bot commands with Telegram API (makes them visible in client)"""
         commands = [
+            # Basic commands
             BotCommand("start", "🚀 Start using the bot"),
             BotCommand("help", "📋 View help information"),
             BotCommand("new", "🆕 Start new conversation"),
             BotCommand("status", "📊 View status"),
             BotCommand("model", "🤖 Switch AI model"),
+            
+            # Extended commands (already have handlers registered)
+            BotCommand("commands", "📋 List all available commands"),
+            BotCommand("context", "📖 Explain context management"),
+            BotCommand("compact", "🗜️ Compact session context"),
+            BotCommand("stop", "⏹️ Stop current run"),
+            BotCommand("verbose", "🔍 Toggle verbose mode"),
+            BotCommand("reasoning", "🧠 Toggle reasoning visibility"),
+            BotCommand("usage", "📊 Show usage statistics"),
+            
+            # Session management
+            BotCommand("reset", "🔄 Reset conversation (clear transcript)"),
         ]
         
         try:
             await self._app.bot.set_my_commands(commands)
-            logger.info(f"✅ Registered {len(commands)} commands with Telegram")
+            logger.info(f"✅ Registered {len(commands)} commands with Telegram API")
         except Exception as e:
-            logger.error(f"Failed to register commands: {e}")
+            logger.error(f"Failed to register commands with Telegram API: {e}")
 
     async def _setup_menu_button(self):
         """Setup bot menu button"""
@@ -676,6 +721,65 @@ class TelegramChannel(ChannelPlugin):
             parse_mode="Markdown",
             reply_markup=reply_markup
         )
+    
+    async def _handle_reset_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /reset command - reset session (clear transcript)"""
+        try:
+            # Build session key from chat info
+            chat_id = update.effective_chat.id
+            chat_type = update.effective_chat.type
+            
+            # Construct session key matching gateway format
+            # Format: {channel}:{account_id}:{scope}:{id}
+            if chat_type == "private":
+                session_key = f"telegram:{self.id}:dm:main:{chat_id}"
+            else:
+                session_key = f"telegram:{self.id}:group:{chat_id}"
+            
+            logger.info(f"[{self.id}] Reset requested for session: {session_key}")
+            
+            # Call gateway sessions.reset method
+            try:
+                from openclaw.gateway.api.sessions_methods import SessionsResetMethod
+                
+                reset_method = SessionsResetMethod()
+                result = await reset_method.execute(
+                    connection=None,
+                    params={
+                        "key": session_key,
+                        "archiveTranscript": True  # Archive old transcript
+                    }
+                )
+                
+                if result.get("ok"):
+                    new_session_id = result.get("sessionId", "unknown")
+                    message = (
+                        "✅ **Conversation Reset**\n\n"
+                        "Your conversation history has been cleared!\n"
+                        f"🆔 New session: `{new_session_id[:8]}...`\n\n"
+                        "We can start fresh now! 🎉"
+                    )
+                    logger.info(f"[{self.id}] Session reset successful: {new_session_id}")
+                else:
+                    message = "⚠️ **Reset Partial**\n\nSession was reset, but something went wrong."
+                    logger.warning(f"[{self.id}] Session reset returned non-ok result")
+                    
+            except Exception as reset_err:
+                logger.error(f"[{self.id}] Failed to reset session via API: {reset_err}")
+                message = (
+                    "⚠️ **Reset Failed**\n\n"
+                    "Unable to reset session. Please try again or contact support.\n"
+                    f"Error: `{str(reset_err)[:100]}`"
+                )
+            
+            await update.message.reply_text(message, parse_mode="Markdown")
+            
+        except Exception as e:
+            logger.error(f"[{self.id}] Error handling reset command: {e}")
+            await update.message.reply_text(
+                "❌ **Error**\n\nFailed to process reset command.",
+                parse_mode="Markdown"
+            )
 
     async def _handle_status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /status command"""
@@ -718,6 +822,8 @@ class TelegramChannel(ChannelPlugin):
 
     async def _handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle callback queries from inline keyboards"""
+        from telegram.error import BadRequest
+        
         query = update.callback_query
         await query.answer()
         
@@ -726,17 +832,30 @@ class TelegramChannel(ChannelPlugin):
         
         if data == "new_confirm":
             # Clear conversation history (implement this in session manager)
-            await query.edit_message_text(
-                "✅ *New Conversation Started*\n\n"
-                "Conversation history cleared. Send a message to start a new conversation!",
-                parse_mode="Markdown"
-            )
+            try:
+                await query.edit_message_text(
+                    "✅ *New Conversation Started*\n\n"
+                    "Conversation history cleared. Send a message to start a new conversation!",
+                    parse_mode="Markdown"
+                )
+            except BadRequest as e:
+                if "Message is not modified" in str(e):
+                    # Message content is identical, silently ignore
+                    logger.debug(f"Message already shows correct state for {data}")
+                else:
+                    raise
         
         elif data == "new_cancel":
-            await query.edit_message_text(
-                "❌ *Cancelled*\n\nContinuing current conversation.",
-                parse_mode="Markdown"
-            )
+            try:
+                await query.edit_message_text(
+                    "❌ *Cancelled*\n\nContinuing current conversation.",
+                    parse_mode="Markdown"
+                )
+            except BadRequest as e:
+                if "Message is not modified" in str(e):
+                    logger.debug(f"Message already shows correct state for {data}")
+                else:
+                    raise
         
         elif data.startswith("model_"):
             model_name = data.replace("model_", "")
@@ -753,10 +872,147 @@ class TelegramChannel(ChannelPlugin):
                 if self._config:
                     self._config["model"] = model_id
                 
-                await query.edit_message_text(
-                    f"✅ *Model Switched*\n\n"
-                    f"Now using: {display_name}\n"
-                    f"Model ID: `{model_id}`\n\n"
-                    f"_New messages will use this model_",
+                try:
+                    await query.edit_message_text(
+                        f"✅ *Model Switched*\n\n"
+                        f"Now using: {display_name}\n"
+                        f"Model ID: `{model_id}`\n\n"
+                        f"_New messages will use this model_",
+                        parse_mode="Markdown"
+                    )
+                except BadRequest as e:
+                    if "Message is not modified" in str(e):
+                        logger.debug(f"Message already shows correct state for model {model_name}")
+                    else:
+                        raise
+    
+    async def _check_sender_allowed(
+        self,
+        sender_id: str,
+        username: str | None,
+        dm_policy: str
+    ) -> bool:
+        """Check if sender is allowed based on dm_policy and allowFrom.
+        
+        Args:
+            sender_id: Telegram user ID
+            username: Telegram username (without @)
+            dm_policy: DM policy (pairing, allowlist, open)
+            
+        Returns:
+            True if sender is allowed
+        """
+        # For open policy with wildcard, allow all
+        if dm_policy == "open":
+            allow_from = self._config.get("allowFrom") or self._config.get("allow_from") or []
+            if "*" in allow_from:
+                return True
+        
+        # Get allowFrom from config
+        allow_from_config = self._config.get("allowFrom") or self._config.get("allow_from") or []
+        
+        # Get allowFrom from pairing store
+        try:
+            from ...pairing.pairing_store import read_channel_allow_from_store
+            allow_from_store = read_channel_allow_from_store("telegram")
+        except Exception as e:
+            logger.warning(f"Failed to read pairing store: {e}")
+            allow_from_store = []
+        
+        # Merge both lists
+        effective_allow_from = list(set(allow_from_config + allow_from_store))
+        
+        # Check wildcard
+        if "*" in effective_allow_from:
+            return True
+        
+        # Check if empty and not in pairing mode
+        if not effective_allow_from and dm_policy == "allowlist":
+            return False
+        
+        # Check sender ID match
+        if sender_id in effective_allow_from:
+            return True
+        
+        # Check username match (case-insensitive)
+        if username:
+            username_lower = username.lower()
+            username_with_at = f"@{username_lower}"
+            
+            for allowed in effective_allow_from:
+                allowed_lower = allowed.lower()
+                if allowed_lower == username_lower or allowed_lower == username_with_at:
+                    return True
+        
+        return False
+    
+    async def _handle_pairing_request(
+        self,
+        sender: Any,
+        chat: Any,
+        context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle pairing request for unauthorized DM.
+        
+        Args:
+            sender: Telegram User object
+            chat: Telegram Chat object
+            context: Telegram context
+        """
+        try:
+            from ...pairing.pairing_store import upsert_channel_pairing_request
+            from ...pairing.messages import format_pairing_request_message
+            
+            # Create or update pairing request
+            result = upsert_channel_pairing_request(
+                channel="telegram",
+                sender_id=str(sender.id),
+                meta={
+                    "username": sender.username or "",
+                    "first_name": sender.first_name or "",
+                    "last_name": sender.last_name or "",
+                    "full_name": sender.full_name or "",
+                }
+            )
+            
+            pairing_code = result["code"]
+            is_new_request = result["created"]
+            
+            # Only send message for new requests
+            if is_new_request:
+                logger.info(f"Created pairing request for telegram:{sender.id}, code={pairing_code}")
+                
+                # Format pairing message
+                message_text = format_pairing_request_message(
+                    code=pairing_code,
+                    channel="telegram",
+                    id_label=f"Telegram ID ({sender.id})"
+                )
+                
+                # Add user info
+                user_info = f"\n📱 **Your Info**\n"
+                user_info += f"- Telegram ID: `{sender.id}`\n"
+                if sender.username:
+                    user_info += f"- Username: @{sender.username}\n"
+                user_info += f"- Name: {sender.full_name}\n"
+                
+                message_text = message_text.replace(
+                    "This code expires in 1 hour.",
+                    user_info + "\nThis code expires in 1 hour."
+                )
+                
+                # Send to user
+                await context.bot.send_message(
+                    chat_id=chat.id,
+                    text=message_text,
                     parse_mode="Markdown"
                 )
+            else:
+                logger.debug(f"Pairing request already exists for telegram:{sender.id}")
+                
+        except Exception as e:
+            logger.error(f"Failed to handle pairing request: {e}", exc_info=True)
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text="⚠️ Access not configured. Please contact the bot owner.",
+            )

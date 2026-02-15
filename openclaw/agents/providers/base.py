@@ -18,7 +18,8 @@ class LLMMessage:
     content: Any
     images: list[str] | None = None  # List of image URLs or file paths
     tool_calls: list[dict] | None = None  # Tool calls (for assistant messages)
-    tool_call_id: str | None = None  # Tool call ID (for toolResult messages)
+    tool_call_id: str | None = None  # Tool call ID (for tool result messages)
+    name: str | None = None  # Tool name (for tool result messages)
 
 
 @dataclass

@@ -215,28 +215,55 @@ def load_skill_entry_from_file(
     )
 
 
+def _escape_xml(text: str) -> str:
+    """Escape XML special characters"""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
 def format_skills_for_prompt(skills: list[Skill]) -> str:
     """
-    Format skills for system prompt (matches pi-coding-agent formatSkillsForPrompt).
+    Format skills for system prompt (matches pi-mono formatSkillsForPrompt).
     
-    Returns formatted string like:
-    - skill-name: Description (location: /path/to/SKILL.md)
-    - another-skill: Description (location: /path/to/SKILL.md)
+    Returns XML formatted string:
+    <available_skills>
+      <skill>
+        <name>skill-name</name>
+        <description>Description</description>
+        <location>/path/to/SKILL.md</location>
+      </skill>
+      ...
+    </available_skills>
     
     Args:
         skills: List of skills
     
     Returns:
-        Formatted skills string
+        XML formatted skills string with intro text
     """
     if not skills:
         return ""
     
-    lines = []
+    lines = [
+        "The following skills provide specialized guidance for common tasks:",
+        "",
+        "<available_skills>"
+    ]
+    
     for skill in skills:
-        line = f"- {skill.name}: {skill.description}"
+        lines.append("  <skill>")
+        lines.append(f"    <name>{_escape_xml(skill.name)}</name>")
+        if skill.description:
+            lines.append(f"    <description>{_escape_xml(skill.description)}</description>")
         if skill.location:
-            line += f" (location: {skill.location})"
-        lines.append(line)
+            lines.append(f"    <location>{_escape_xml(str(skill.location))}</location>")
+        lines.append("  </skill>")
+    
+    lines.append("</available_skills>")
     
     return "\n".join(lines)

@@ -93,8 +93,14 @@ class GeminiProvider(LLMProvider):
             # Handle tool messages (function responses)
             if msg.role == "tool":
                 # Tool result should be in user role with function_response part
+                # CRITICAL FIX: Ensure name is never None or empty
+                tool_name = getattr(msg, 'name', None) or 'unknown_function'
+                if not tool_name or not str(tool_name).strip():
+                    tool_name = 'unknown_function'
+                    logger.warning(f"Tool message has empty name, using 'unknown_function'")
+                
                 parts = [types.Part.from_function_response(
-                    name=getattr(msg, 'name', 'unknown_function'),
+                    name=tool_name,
                     response={"result": msg.content}
                 )]
                 content = types.Content(role="user", parts=parts)
@@ -139,8 +145,14 @@ class GeminiProvider(LLMProvider):
             # Add tool calls if present (for assistant messages)
             if hasattr(msg, 'tool_calls') and msg.tool_calls and role == "model":
                 for tc in msg.tool_calls:
+                    # Skip tool calls without name (defensive check)
+                    func_name = tc.get("name")
+                    if not func_name:
+                        logger.warning(f"Skipping tool_call without name: {tc}")
+                        continue
+                    
                     parts.append(types.Part.from_function_call(
-                        name=tc.get("name"),
+                        name=func_name,
                         args=tc.get("arguments", {})
                     ))
             
@@ -185,15 +197,22 @@ class GeminiProvider(LLMProvider):
                 logger.warning("No messages to send to Gemini")
                 return
             
-            # DEBUG: Log the actual messages being sent
+            # DEBUG: Log the actual messages being sent with detailed part types
             logger.info(f"📨 Sending {len(contents)} message(s) to Gemini")
             for idx, content in enumerate(contents):
                 logger.info(f"  Message {idx}: role={content.role}, parts={len(content.parts) if hasattr(content, 'parts') and content.parts else 0}")
                 if hasattr(content, 'parts') and content.parts:
-                    for part_idx, part in enumerate(content.parts[:2]):  # Log first 2 parts
+                    for part_idx, part in enumerate(content.parts):
+                        # Check part type and log accordingly
                         if hasattr(part, 'text') and part.text:
                             text_preview = part.text[:100] if len(part.text) > 100 else part.text
                             logger.info(f"    Part {part_idx}: text={repr(text_preview)}")
+                        elif hasattr(part, 'function_call') and part.function_call:
+                            logger.info(f"    Part {part_idx}: function_call={part.function_call.name}")
+                        elif hasattr(part, 'function_response') and part.function_response:
+                            logger.info(f"    Part {part_idx}: function_response={part.function_response.name}")
+                        else:
+                            logger.info(f"    Part {part_idx}: unknown_type")
             if system_instruction:
                 logger.info(f"  System instruction: {repr(system_instruction[:100]) if len(system_instruction) > 100 else repr(system_instruction)}")
 

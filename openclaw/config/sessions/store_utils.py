@@ -1,0 +1,143 @@
+"""
+Session store utilities with mutator pattern.
+
+Matches openclaw-ts updateSessionStore pattern for atomic updates.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Any, Callable, Dict
+
+from openclaw.agents.session_entry import SessionEntry
+
+logger = logging.getLogger(__name__)
+
+
+def load_session_store_from_path(store_path: Path | str) -> Dict[str, SessionEntry]:
+    """
+    Load session store from file path.
+    
+    Args:
+        store_path: Path to store.json file (Path or str)
+    
+    Returns:
+        Dict mapping canonical session keys to SessionEntry objects
+    """
+    # Convert to Path if string
+    if isinstance(store_path, str):
+        store_path = Path(store_path)
+    
+    if not store_path.exists():
+        return {}
+    
+    try:
+        with open(store_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Convert dict entries to SessionEntry objects
+        store = {}
+        for key, entry_data in data.items():
+            if isinstance(entry_data, dict):
+                try:
+                    store[key] = SessionEntry(**entry_data)
+                except Exception as e:
+                    logger.warning(f"Failed to parse session entry {key}: {e}")
+            else:
+                logger.warning(f"Invalid entry format for {key}")
+        
+        return store
+    
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse session store {store_path}: {e}")
+        return {}
+    except Exception as e:
+        logger.error(f"Failed to load session store {store_path}: {e}")
+        return {}
+
+
+def save_session_store_to_path(store_path: Path | str, store: Dict[str, SessionEntry]) -> None:
+    """
+    Save session store to file path.
+    
+    Args:
+        store_path: Path to store.json file (Path or str)
+        store: Dict mapping canonical session keys to SessionEntry objects
+    """
+    # Convert to Path if string
+    if isinstance(store_path, str):
+        store_path = Path(store_path)
+    
+    # Ensure parent directory exists
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Convert SessionEntry objects to dicts
+    data = {}
+    for key, entry in store.items():
+        if isinstance(entry, SessionEntry):
+            # Use dataclass asdict or model_dump
+            if hasattr(entry, 'model_dump'):
+                data[key] = entry.model_dump()
+            elif hasattr(entry, '__dataclass_fields__'):
+                from dataclasses import asdict
+                data[key] = asdict(entry)
+            else:
+                data[key] = entry.__dict__
+        else:
+            data[key] = entry
+    
+    # Write to file
+    try:
+        with open(store_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, default=str)
+        logger.debug(f"Saved session store to {store_path}")
+    except Exception as e:
+        logger.error(f"Failed to save session store {store_path}: {e}")
+        raise
+
+
+def update_session_store_with_mutator(
+    store_path: Path | str,
+    mutator: Callable[[Dict[str, SessionEntry]], None]
+) -> None:
+    """
+    Update session store using mutator pattern (matches openclaw-ts).
+    
+    This provides atomic read-modify-write with a mutator function:
+    1. Load store
+    2. Call mutator(store) to modify in-place
+    3. Save store
+    
+    Args:
+        store_path: Path to store.json file
+        mutator: Function that modifies the store dict in-place
+    
+    Example:
+        ```python
+        def mutator(store: Dict[str, SessionEntry]) -> None:
+            entry = store.get("some-key")
+            if entry:
+                entry.updated_at = time.time()
+        
+        update_session_store_with_mutator(path, mutator)
+        ```
+    """
+    # Load current store
+    store = load_session_store_from_path(store_path)
+    
+    # Apply mutator
+    try:
+        mutator(store)
+    except Exception as e:
+        logger.error(f"Mutator failed: {e}")
+        raise
+    
+    # Save modified store
+    save_session_store_to_path(store_path, store)
+    logger.debug(f"Updated session store at {store_path}")
+
+
+# Alias for compatibility with sessions_methods.py
+update_session_store = update_session_store_with_mutator
+load_session_store = load_session_store_from_path

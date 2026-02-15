@@ -54,6 +54,10 @@ class ExtensionRuntime:
     async def emit(self, event: str, payload: dict[str, Any] | None = None) -> list[Any]:
         """
         Dispatch event to all registered handlers. Returns list of results.
+        
+        For modifying hooks (before_agent_start), results are merged:
+        - prependContext: concatenated with '\n\n'
+        - systemPrompt: last one wins
         """
         if self._context is None:
             logger.debug("ExtensionRuntime.emit(%s) skipped: no context", event)
@@ -70,4 +74,42 @@ class ExtensionRuntime:
                     results.append(r)
             except Exception as e:
                 logger.exception("Extension handler failed for %s: %s", event, e)
+        
+        # Special handling for modifying hooks
+        if event == "before_agent_start":
+            return self._merge_before_agent_start_results(results)
+        
         return results
+    
+    def _merge_before_agent_start_results(
+        self,
+        results: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """
+        Merge results from before_agent_start hook.
+        
+        Matches openclaw-ts behavior: concatenate prependContext, last systemPrompt wins.
+        
+        Returns:
+            List with single merged dict, or empty list
+        """
+        if not results:
+            return []
+        
+        merged_prepend: list[str] = []
+        final_system_prompt: str | None = None
+        
+        for result in results:
+            if isinstance(result, dict):
+                if result.get("prependContext"):
+                    merged_prepend.append(result["prependContext"])
+                if result.get("systemPrompt"):
+                    final_system_prompt = result["systemPrompt"]
+        
+        merged: dict[str, Any] = {}
+        if merged_prepend:
+            merged["prependContext"] = "\n\n".join(merged_prepend)
+        if final_system_prompt:
+            merged["systemPrompt"] = final_system_prompt
+        
+        return [merged] if merged else []

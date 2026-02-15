@@ -1,271 +1,258 @@
-"""Bash execution tool with exec security configuration"""
-from __future__ import annotations
+"""
+Bash execution tool matching pi-mono's bash.ts
 
+This module provides bash command execution with:
+- Output truncation (50KB/2000 lines)
+- Streaming updates via on_update callback
+- Cancellation support via signal
+- Pluggable operations for remote execution
+
+Matches pi-mono/packages/coding-agent/src/core/tools/bash.ts
+"""
+from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import shlex
-from pathlib import Path
-from typing import Any
+import tempfile
+from typing import Any, Callable
 
-from .base import AgentTool, ToolResult
+from ..types import AgentToolResult, TextContent
+from .base import AgentToolBase
+from .default_operations import DefaultBashOperations
+from .operations import BashOperations
+from .truncate import (
+    DEFAULT_MAX_BYTES,
+    DEFAULT_MAX_LINES,
+    format_size,
+    truncate_tail,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class BashTool(AgentTool):
-    """Execute bash commands with configurable security modes and approval workflow"""
-
-    def __init__(
-        self,
-        exec_config: dict | None = None,
-        workspace_dir: Path | None = None,
-        approval_manager: Any | None = None
-    ):
-        """
-        Initialize BashTool with exec configuration
-        
-        Args:
-            exec_config: Exec configuration dict (host, security, ask, safe_bins, etc.)
-            workspace_dir: Default workspace directory for commands
-            approval_manager: ExecApprovalManager for command approval workflow
-        """
-        super().__init__()
-        self.name = "bash"
-        self.description = (
-            "Execute bash commands in a shell with FULL access. "
-            "NO sandbox restrictions. You can run ANY command, install packages, execute Python scripts. "
-            "All system tools and libraries (including python-pptx) are available. "
-            "Use for system operations, running scripts, file operations, package installations, etc."
-        )
-        
-        # Load exec config
-        self.exec_config = exec_config or {}
-        self.security_mode = self.exec_config.get("security", "full")
-        self.ask_mode = self.exec_config.get("ask", "off")  # off | on-miss | always
-        self.safe_bins = set(self.exec_config.get("safe_bins", []))
-        self.path_prepend = self.exec_config.get("path_prepend", [])
-        self.timeout_sec = self.exec_config.get("timeout_sec", 120)
-        self.workspace_dir = workspace_dir
-        self.approval_manager = approval_manager
-
-    def get_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "The bash command to execute"},
-                "working_directory": {
-                    "type": "string",
-                    "description": "Optional working directory for the command",
-                },
-            },
-            "required": ["command"],
-        }
-
-    def _check_security(self, command: str) -> tuple[bool, str | None]:
-        """
-        Check if command is allowed based on security mode
-        
-        Returns:
-            (allowed, reason_if_denied)
-        """
-        if self.security_mode == "deny":
-            return False, "Exec security mode is 'deny' - all commands blocked"
-        
-        if self.security_mode == "full":
-            return True, None
-        
-        # allowlist mode - check if command uses safe binaries
-        if self.security_mode == "allowlist":
-            # Extract the first command (before pipes, &&, ||, etc.)
-            try:
-                parts = shlex.split(command.split("|")[0].split("&&")[0].split("||")[0].split(";")[0].strip())
-                if not parts:
-                    return False, "Empty command"
-                
-                binary = Path(parts[0]).name
-                
-                # Check if binary is in safe_bins
-                if binary in self.safe_bins:
-                    return True, None
-                
-                # Also check without extension (for .exe on Windows)
-                binary_no_ext = binary.rsplit(".", 1)[0] if "." in binary else binary
-                if binary_no_ext in self.safe_bins:
-                    return True, None
-                
-                return False, f"Binary '{binary}' not in safe_bins allowlist. Security mode is 'allowlist'."
-                
-            except Exception as e:
-                logger.warning(f"Failed to parse command for allowlist check: {e}")
-                return False, f"Failed to parse command: {e}"
-        
-        return False, f"Unknown security mode: {self.security_mode}"
-
-    def _build_env(self, base_env: dict[str, str] | None = None) -> dict[str, str]:
-        """Build environment with PATH prepend"""
-        env = base_env.copy() if base_env else os.environ.copy()
-        
-        if self.path_prepend:
-            current_path = env.get("PATH", "")
-            prepend_path = os.pathsep.join(self.path_prepend)
-            env["PATH"] = f"{prepend_path}{os.pathsep}{current_path}" if current_path else prepend_path
-        
-        return env
-
-    def _should_request_approval(self, command: str, security_passed: bool) -> bool:
-        """Determine if approval is needed based on ask_mode"""
-        if self.ask_mode == "off":
-            return False
-        
-        if self.ask_mode == "always":
-            return True
-        
-        if self.ask_mode == "on-miss":
-            # Request approval if security check would block it
-            return not security_passed
-        
-        return False
+def create_bash_tool(
+    cwd: str,
+    operations: BashOperations | None = None,
+    command_prefix: str | None = None,
+) -> AgentToolBase:
+    """
+    Create a bash tool configured for a specific working directory.
     
-    async def execute(self, params: dict[str, Any]) -> ToolResult:
-        """Execute bash command with security checks and approval workflow"""
-        command = params.get("command", "")
-        working_dir = params.get("working_directory")
-
-        if not command:
-            return ToolResult(success=False, content="", error="No command provided")
-
-        # Security check
-        allowed, reason = self._check_security(command)
+    Args:
+        cwd: Current working directory for commands
+        operations: Bash operations implementation (defaults to local subprocess)
+        command_prefix: Optional prefix to prepend to commands (e.g., "shopt -s expand_aliases")
         
-        # Check if approval is needed
-        needs_approval = self._should_request_approval(command, allowed)
+    Returns:
+        Configured BashTool instance
+    """
+    ops = operations or DefaultBashOperations()
+    
+    class BashTool(AgentToolBase[dict, dict]):
+        """Bash command execution tool"""
         
-        if needs_approval and self.approval_manager:
-            logger.info(f"Requesting approval for command: {command[:100]}")
-            
-            # Request approval
-            approval_id = self.approval_manager.request_approval(
-                command=command,
-                context={
-                    "security_mode": self.security_mode,
-                    "ask_mode": self.ask_mode,
-                    "security_passed": allowed,
-                    "working_dir": working_dir
-                }
+        @property
+        def name(self) -> str:
+            return "bash"
+        
+        @property
+        def label(self) -> str:
+            return "Bash"
+        
+        @property
+        def description(self) -> str:
+            return (
+                f"Execute a bash command in the current working directory. "
+                f"Returns stdout and stderr. Output is truncated to last "
+                f"{DEFAULT_MAX_LINES} lines or {DEFAULT_MAX_BYTES // 1024}KB "
+                f"(whichever is hit first). If truncated, full output is saved "
+                f"to a temp file. Optionally provide a timeout in seconds."
             )
+        
+        @property
+        def parameters(self) -> dict[str, Any]:
+            return {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Bash command to execute"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Timeout in seconds (optional, no default timeout)"
+                    }
+                },
+                "required": ["command"]
+            }
+        
+        async def execute(
+            self,
+            tool_call_id: str,
+            params: dict,
+            signal: asyncio.Event | None = None,
+            on_update: Callable[[AgentToolResult], None] | None = None,
+        ) -> AgentToolResult[dict]:
+            """Execute bash command with streaming and truncation"""
             
-            # Wait for approval (with timeout)
-            try:
-                approved = await asyncio.wait_for(
-                    self._wait_for_approval(approval_id),
-                    timeout=300  # 5 minutes timeout
-                )
+            command = params["command"]
+            timeout = params.get("timeout")
+            
+            # Apply command prefix if configured
+            resolved_command = f"{command_prefix}\n{command}" if command_prefix else command
+            
+            # Streaming output management
+            # Keep a rolling buffer of the last chunk for tail truncation
+            chunks: list[bytes] = []
+            chunks_bytes = 0
+            max_chunks_bytes = DEFAULT_MAX_BYTES * 2  # Keep more than we need
+            
+            # Temp file for full output
+            temp_file_path: str | None = None
+            temp_file: Any | None = None
+            total_bytes = 0
+            
+            def handle_data(data: bytes):
+                """Handle incoming data from subprocess"""
+                nonlocal chunks_bytes, total_bytes, temp_file_path, temp_file
                 
-                if not approved:
-                    logger.warning(f"Command rejected by user: {command[:100]}")
-                    return ToolResult(
-                        success=False,
-                        content="",
-                        error="Command execution rejected by user",
-                        metadata={"approval_id": approval_id, "approved": False}
+                total_bytes += len(data)
+                
+                # Start writing to temp file once we exceed threshold
+                if total_bytes > DEFAULT_MAX_BYTES and not temp_file_path:
+                    # Create temp file
+                    fd, temp_file_path = tempfile.mkstemp(
+                        prefix=f"openclaw-bash-{tool_call_id}-",
+                        suffix=".log"
                     )
+                    temp_file = open(fd, 'wb')
+                    # Write all buffered chunks to the file
+                    for chunk in chunks:
+                        temp_file.write(chunk)
                 
-                logger.info(f"Command approved: {command[:100]}")
-                # Override security check if approved
-                allowed = True
+                # Write to temp file if we have one
+                if temp_file:
+                    temp_file.write(data)
                 
-            except asyncio.TimeoutError:
-                logger.warning(f"Approval timeout for command: {command[:100]}")
-                return ToolResult(
-                    success=False,
-                    content="",
-                    error="Approval request timed out (5 minutes)",
-                    metadata={"approval_id": approval_id, "timeout": True}
-                )
-        
-        # Check security (unless approved)
-        if not allowed:
-            logger.warning(f"Command blocked by security policy: {command[:100]}")
-            return ToolResult(
-                success=False,
-                content="",
-                error=f"Command blocked: {reason}",
-                metadata={"security_mode": self.security_mode, "blocked": True}
-            )
-
-        # Resolve working directory
-        if not working_dir and self.workspace_dir:
-            working_dir = str(self.workspace_dir)
-        
-        # Build environment with PATH prepend
-        env = self._build_env()
-
-        try:
-            # Create subprocess
-            process = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=working_dir,
-                env=env,
-            )
-
-            # Wait for completion with configurable timeout
+                # Keep rolling buffer of recent data
+                chunks.append(data)
+                chunks_bytes += len(data)
+                
+                # Trim old chunks if buffer is too large
+                while chunks_bytes > max_chunks_bytes and len(chunks) > 1:
+                    removed = chunks.pop(0)
+                    chunks_bytes -= len(removed)
+                
+                # Stream partial output to callback (truncated rolling buffer)
+                if on_update:
+                    full_buffer = b''.join(chunks)
+                    full_text = full_buffer.decode('utf-8', errors='replace')
+                    truncation = truncate_tail(full_text)
+                    on_update(AgentToolResult(
+                        content=[TextContent(text=truncation.content or "")],
+                        details={
+                            "truncation": truncation.__dict__ if truncation.truncated else None,
+                            "full_output_path": temp_file_path,
+                        }
+                    ))
+            
+            # Check if already cancelled
+            if signal and signal.is_set():
+                raise asyncio.CancelledError("Operation aborted")
+            
+            # Execute command
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), 
-                    timeout=self.timeout_sec
+                result = await ops.exec(
+                    command=resolved_command,
+                    cwd=cwd,
+                    on_data=handle_data,
+                    signal=signal,
+                    timeout=timeout,
                 )
-            except TimeoutError:
-                process.kill()
-                return ToolResult(
-                    success=False, 
-                    content="", 
-                    error=f"Command timed out after {self.timeout_sec} seconds"
-                )
-
-            # Decode output
-            stdout_text = stdout.decode("utf-8", errors="replace")
-            stderr_text = stderr.decode("utf-8", errors="replace")
-
-            # Combine output
-            output = ""
-            if stdout_text:
-                output += stdout_text
-            if stderr_text:
+            except asyncio.CancelledError:
+                # Close temp file on cancellation
+                if temp_file:
+                    temp_file.close()
+                
+                # Combine all buffered chunks for output
+                full_buffer = b''.join(chunks)
+                output = full_buffer.decode('utf-8', errors='replace')
+                
                 if output:
-                    output += "\n"
-                output += stderr_text
-
-            return ToolResult(
-                success=process.returncode == 0,
-                content=output,
-                error=None if process.returncode == 0 else f"Exit code: {process.returncode}",
-                metadata={
-                    "exitCode": process.returncode,
-                    "security_mode": self.security_mode,
-                    "ask_mode": self.ask_mode,
-                    "timeout_sec": self.timeout_sec,
-                },
+                    output += "\n\n"
+                output += "Command aborted"
+                raise Exception(output)
+            except asyncio.TimeoutError:
+                # Close temp file on timeout
+                if temp_file:
+                    temp_file.close()
+                
+                # Combine all buffered chunks for output
+                full_buffer = b''.join(chunks)
+                output = full_buffer.decode('utf-8', errors='replace')
+                
+                if output:
+                    output += "\n\n"
+                output += f"Command timed out after {timeout} seconds"
+                raise Exception(output)
+            finally:
+                # Always close temp file
+                if temp_file:
+                    temp_file.close()
+            
+            # Process final output
+            full_buffer = b''.join(chunks)
+            full_output = full_buffer.decode('utf-8', errors='replace')
+            
+            # Apply tail truncation
+            truncation = truncate_tail(full_output)
+            output_text = truncation.content or "(no output)"
+            
+            # Build details with truncation info
+            details: dict[str, Any] | None = None
+            
+            if truncation.truncated:
+                details = {
+                    "truncation": truncation.__dict__,
+                    "full_output_path": temp_file_path,
+                }
+                
+                # Build actionable notice
+                start_line = truncation.total_lines - truncation.output_lines + 1
+                end_line = truncation.total_lines
+                
+                if truncation.last_line_partial:
+                    # Edge case: last line alone > 50KB
+                    last_line = full_output.split('\n')[-1]
+                    last_line_size = format_size(len(last_line.encode('utf-8')))
+                    output_text += (
+                        f"\n\n[Showing last {format_size(truncation.output_bytes)} "
+                        f"of line {end_line} (line is {last_line_size}). "
+                        f"Full output: {temp_file_path}]"
+                    )
+                elif truncation.truncated_by == "lines":
+                    output_text += (
+                        f"\n\n[Showing lines {start_line}-{end_line} of "
+                        f"{truncation.total_lines}. Full output: {temp_file_path}]"
+                    )
+                else:
+                    output_text += (
+                        f"\n\n[Showing lines {start_line}-{end_line} of "
+                        f"{truncation.total_lines} ({format_size(DEFAULT_MAX_BYTES)} limit). "
+                        f"Full output: {temp_file_path}]"
+                    )
+            
+            exit_code = result["exit_code"]
+            if exit_code != 0 and exit_code is not None:
+                output_text += f"\n\nCommand exited with code {exit_code}"
+                raise Exception(output_text)
+            
+            return AgentToolResult(
+                content=[TextContent(text=output_text)],
+                details=details
             )
-
-        except Exception as e:
-            logger.error(f"Bash tool error: {e}", exc_info=True)
-            return ToolResult(success=False, content="", error=str(e))
     
-    async def _wait_for_approval(self, approval_id: str) -> bool:
-        """Wait for approval decision"""
-        while True:
-            request = self.approval_manager.get_approval(approval_id)
-            if not request:
-                return False
-            
-            if request.status == "approved":
-                return True
-            elif request.status in ["rejected", "expired"]:
-                return False
-            
-            # Check again in 1 second
-            await asyncio.sleep(1.0)
+    return BashTool()
+
+
+__all__ = ["create_bash_tool"]

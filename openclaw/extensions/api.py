@@ -55,15 +55,33 @@ class ExtensionAPI:
         })
         logger.debug("Extension %s registered tool %s", self._extension_id, name)
 
-    def on(self, event: str, handler: Callable[..., Any]) -> None:
+    def on(self, event: str, handler: Callable[..., Any] | None = None) -> Callable[..., Any] | None:
         """
         Subscribe to an extension event.
 
         Supported events: agent_start, agent_end, turn_start, turn_end,
         before_agent_start, tool_call, tool_result, session_start, session_end.
+        
+        Can be used as decorator:
+            @api.on("before_agent_start")
+            async def handler(event, context):
+                ...
+        
+        Or called directly:
+            api.on("before_agent_start", handler)
         """
-        self._handlers.setdefault(event, []).append(handler)
-        logger.debug("Extension %s registered handler for %s", self._extension_id, event)
+        if handler is None:
+            # Decorator syntax: @api.on("event_name")
+            def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+                self._handlers.setdefault(event, []).append(fn)
+                logger.debug("Extension %s registered handler for %s", self._extension_id, event)
+                return fn
+            return decorator
+        else:
+            # Direct call: api.on("event_name", handler)
+            self._handlers.setdefault(event, []).append(handler)
+            logger.debug("Extension %s registered handler for %s", self._extension_id, event)
+            return None
 
     def register_command(
         self,

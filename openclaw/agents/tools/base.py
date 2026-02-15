@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Generic, TypeVar
 
@@ -24,6 +25,19 @@ logger = logging.getLogger(__name__)
 
 TParams = TypeVar("TParams")
 TDetails = TypeVar("TDetails")
+
+
+class LegacyToolResult(BaseModel):
+    """
+    Legacy tool result format (for backward compatibility).
+    
+    This is the old format used by existing tools. LegacyAgentTool.execute()
+    converts this to AgentToolResult automatically.
+    """
+    success: bool
+    content: str | None = None
+    error: str | None = None
+    metadata: dict[str, Any] = {}
 
 
 class AgentToolBase(ABC, Generic[TParams, TDetails]):
@@ -154,6 +168,14 @@ class AgentToolBase(ABC, Generic[TParams, TDetails]):
             ```
         """
         ...
+    
+    def get_schema(self) -> dict[str, Any]:
+        """
+        Get JSON Schema for tool parameters (backward compatibility).
+        
+        Returns the same as self.parameters.
+        """
+        return self.parameters
     
     @abstractmethod
     async def execute(
@@ -348,6 +370,11 @@ class LegacyAgentTool:
     """
     Legacy tool base class that supports old API.
     
+    **DEPRECATED**: Use AgentToolBase instead for new tools.
+    
+    This class is provided for backward compatibility only.
+    It will be removed in a future version.
+    
     Subclasses should:
     - Set self.name, self.description in __init__
     - Implement get_schema() -> dict
@@ -355,6 +382,13 @@ class LegacyAgentTool:
     """
     
     def __init__(self):
+        warnings.warn(
+            "LegacyAgentTool is deprecated and will be removed in a future version. "
+            "Use AgentToolBase instead for new tools. "
+            "See openclaw/agents/tools/README.md for migration guide.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         self.name = ""
         self.description = ""
     
@@ -380,30 +414,41 @@ class LegacyAgentTool:
         """Execute via _execute_impl"""
         if hasattr(self, "_execute_impl"):
             result = await self._execute_impl(params)
-            # Convert ToolResult to AgentToolResult
+            # Convert LegacyToolResult to AgentToolResult
             if isinstance(result, AgentToolResult):
                 return result
             # Convert legacy ToolResult
-            if result.success:
-                return AgentToolResult(
-                    content=[TextContent(text=result.content or "")],
-                    details={"success": True}
-                )
-            else:
-                return AgentToolResult(
-                    content=[TextContent(text=result.error or "Error")],
-                    details={"success": False, "error": result.error}
-                )
+            if isinstance(result, LegacyToolResult):
+                if result.success:
+                    content_text = result.content or ""
+                    return AgentToolResult(
+                        content=[TextContent(text=content_text)],
+                        details={
+                            "success": True,
+                            **result.metadata
+                        }
+                    )
+                else:
+                    error_text = result.error or "Error"
+                    return AgentToolResult(
+                        content=[TextContent(text=error_text)],
+                        details={
+                            "success": False,
+                            "error": result.error,
+                            **result.metadata
+                        }
+                    )
         raise NotImplementedError("_execute_impl not implemented")
 
 
 # Backward compatibility aliases
 AgentTool = LegacyAgentTool
-ToolResult = AgentToolResult
+ToolResult = LegacyToolResult  # Old tools use LegacyToolResult
 
 __all__ = [
     "AgentToolBase",
     "LegacyAgentTool",
+    "LegacyToolResult",
     "AgentTool",
     "AgentToolResult",
     "ToolResult",

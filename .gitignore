@@ -42,3 +42,6 @@ ENV/
 
 # Terminal output
 terminals/
+
+# Documentation (temporary files)
+docs/

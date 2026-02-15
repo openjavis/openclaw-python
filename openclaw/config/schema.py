@@ -86,15 +86,17 @@ class ChannelConfig(BaseModel):
     """Individual channel configuration"""
 
     enabled: bool = Field(default=True)
-    botToken: str | None = Field(default=None)
-    allowFrom: list[str] | None = Field(default=None)
-    dmPolicy: str | None = Field(default=None)
+    botToken: str | None = Field(default=None, alias="bot_token")  # Support both camelCase and snake_case
+    allowFrom: list[str] | None = Field(default=None, alias="allow_from")
+    dmPolicy: str | None = Field(default=None, alias="dm_policy")
     
     # Additional platform-specific fields
     token: str | None = Field(default=None)  # Generic token field
-    signingSecret: str | None = Field(default=None)  # Slack
-    appId: str | None = Field(default=None)  # Teams/Facebook
-    appSecret: str | None = Field(default=None)
+    signingSecret: str | None = Field(default=None, alias="signing_secret")  # Slack
+    appId: str | None = Field(default=None, alias="app_id")  # Teams/Facebook
+    appSecret: str | None = Field(default=None, alias="app_secret")
+    
+    model_config = {"populate_by_name": True}  # Allow both field name and alias
 
 
 class ChannelsConfig(BaseModel):

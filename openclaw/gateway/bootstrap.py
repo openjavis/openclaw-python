@@ -71,19 +71,22 @@ class GatewayBootstrap:
         results = {"steps_completed": 0, "errors": []}
         
         # Pre-Step: Check for first run and trigger onboarding if needed
-        config_path_resolved = config_path or (Path.home() / ".openclaw" / "openclaw.json")
+        config_path_resolved = config_path or (Path.home() / ".openclaw" / "config.json")
         
         if not config_path_resolved.exists():
             logger.info("First run detected - no configuration found")
             logger.info("Starting onboarding wizard...")
             
             try:
-                from ..wizard.onboarding import run_interactive_onboarding
+                from ..wizard.onboarding import run_onboarding_wizard
                 
                 # Run onboarding wizard
-                await run_interactive_onboarding()
+                result = await run_onboarding_wizard()
                 
-                logger.info("✅ Onboarding complete! Continuing with bootstrap...")
+                if result.get("completed"):
+                    logger.info("✅ Onboarding complete! Continuing with bootstrap...")
+                else:
+                    logger.warning("Onboarding skipped or incomplete, using defaults...")
             except Exception as e:
                 logger.error(f"Onboarding failed: {e}")
                 # If onboarding fails, we should still try to continue with defaults
@@ -211,6 +214,56 @@ class GatewayBootstrap:
             from ..agents.runtime import MultiProviderRuntime
             self.runtime = MultiProviderRuntime(model=model)
             
+            # Initialize Extensions Runtime (openclaw-ts alignment)
+            try:
+                from ..extensions.runtime import ExtensionRuntime
+                from ..extensions.memory_extension import create_memory_extension
+                from ..extensions.api import ExtensionAPI
+                from ..extensions.types import ExtensionContext
+                
+                extension_runtime = ExtensionRuntime()
+                
+                # Set context
+                extension_context = ExtensionContext(
+                    agent_id="main",
+                    session_id=None,  # Will be set per-session
+                    workspace_dir=workspace_dir,
+                    logger=logger,
+                )
+                extension_runtime.set_context(extension_context)
+                
+                # Register memory extension if enabled
+                memory_enabled = getattr(self.config, "memory_enabled", True)
+                if memory_enabled:
+                    memory_config = {
+                        "auto_recall": getattr(self.config, "memory_auto_recall", True),
+                        "auto_capture": getattr(self.config, "memory_auto_capture", False),
+                        "min_score": getattr(self.config, "memory_min_score", 0.3),
+                        "max_results": getattr(self.config, "memory_max_results", 3),
+                    }
+                    memory_ext = create_memory_extension(workspace_dir, memory_config)
+                    
+                    # Create extension API with required parameters
+                    ext_api = ExtensionAPI(
+                        extension_id="memory-extension",
+                        context=extension_context
+                    )
+                    
+                    # Register extension
+                    memory_ext.register(ext_api)
+                    
+                    # Register handlers with runtime
+                    extension_runtime.register_handlers(ext_api._handlers)
+                    
+                    logger.info(f"Memory extension registered (auto_recall={memory_config['auto_recall']})")
+                
+                # Inject extension runtime into agent runtime
+                self.runtime.extension_runtime = extension_runtime
+                logger.info("Extensions runtime initialized and connected")
+                
+            except Exception as ext_err:
+                logger.warning(f"Failed to initialize extensions: {ext_err}")
+            
             logger.info(f"Created provider: {type(self.provider).__name__}")
         except Exception as e:
             logger.error(f"Runtime creation failed: {e}")
@@ -324,6 +377,7 @@ class GatewayBootstrap:
                 default_runtime=self.runtime,
                 session_manager=self.session_manager,
                 tools=self.tool_registry.list_tools() if self.tool_registry else [],
+                workspace_dir=workspace_dir,
             )
             
             # Register and start enabled channels from config
@@ -497,6 +551,9 @@ class GatewayBootstrap:
                 auto_discover_channels=False,  # We already created ChannelManager
             )
             
+            # Pass bootstrap reference to server for accessing skill_loader
+            self.server._bootstrap = self
+            
             # Override the ChannelManager that GatewayServer created with our own
             # (since we already configured it in Step 13)
             self.server.channel_manager = self.channel_manager
@@ -586,17 +643,32 @@ class GatewayBootstrap:
         """Graceful shutdown"""
         logger.info("Gateway shutting down...")
         
+        # Stop Gateway server first (this stops WebSocket connections)
+        if hasattr(self, 'server') and self.server:
+            try:
+                await self.server.stop()
+            except Exception as e:
+                logger.error(f"Gateway server stop error: {e}")
+        
         # Stop heartbeat
         if self.heartbeat_stop:
             self.heartbeat_stop()
         
         # Stop maintenance timers
         for task in self._maintenance_tasks:
-            task.cancel()
+            try:
+                task.cancel()
+                # Give tasks a moment to cancel
+                await asyncio.sleep(0.1)
+            except Exception:
+                pass
         
         # Stop config reloader
         if self.config_reloader:
-            self.config_reloader.stop()
+            try:
+                self.config_reloader.stop()
+            except Exception:
+                pass
         
         # Stop skills watchers
         try:
@@ -611,12 +683,5 @@ class GatewayBootstrap:
             stop_diagnostic_heartbeat()
         except Exception:
             pass
-        
-        # Stop channels
-        if self.channel_manager:
-            try:
-                await self.channel_manager.stop_all()
-            except Exception as e:
-                logger.error(f"Channel manager stop error: {e}")
         
         logger.info("Gateway shutdown complete")

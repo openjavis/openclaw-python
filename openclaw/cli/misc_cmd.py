@@ -38,8 +38,38 @@ def register_misc_commands(app: typer.Typer):
             "--workspace",
             help="Workspace directory"
         ),
+        install_daemon: bool = typer.Option(
+            None,
+            "--install-daemon/--no-install-daemon",
+            help="Install Gateway service (default: True in quickstart mode)"
+        ),
+        skip_health: bool = typer.Option(
+            False,
+            "--skip-health",
+            help="Skip health check"
+        ),
+        skip_ui: bool = typer.Option(
+            False,
+            "--skip-ui",
+            help="Skip UI selection prompts"
+        ),
+        non_interactive: bool = typer.Option(
+            False,
+            "--non-interactive",
+            help="Run without prompts"
+        ),
+        accept_risk: bool = typer.Option(
+            False,
+            "--accept-risk",
+            help="Accept risk acknowledgement (required for --non-interactive)"
+        ),
+        flow: str = typer.Option(
+            None,
+            "--flow",
+            help="Onboarding flow: quickstart|advanced"
+        ),
     ):
-        """Run onboarding wizard"""
+        """Interactive wizard to set up the gateway, workspace, and channels"""
         try:
             import asyncio
             from pathlib import Path
@@ -50,7 +80,13 @@ def register_misc_commands(app: typer.Typer):
             workspace_dir = Path(workspace) if workspace else Path.home() / ".openclaw"
             
             result = asyncio.run(run_onboarding_wizard(
-                workspace_dir=workspace_dir
+                workspace_dir=workspace_dir,
+                install_daemon=install_daemon,
+                skip_health=skip_health,
+                skip_ui=skip_ui,
+                non_interactive=non_interactive,
+                accept_risk=accept_risk,
+                flow=flow,
             ))
             
             if result.get("completed"):

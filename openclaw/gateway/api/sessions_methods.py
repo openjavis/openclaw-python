@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from dataclasses import asdict
 
 from openclaw.agents.session_entry import SessionEntry
-from openclaw.config.sessions.store import (
+from openclaw.config.sessions.store_utils import (
     load_session_store,
     update_session_store,
 )
@@ -20,6 +20,7 @@ from openclaw.config.sessions.transcripts import (
     read_session_preview_items,
     compact_transcript,
     delete_transcript,
+    get_session_transcript_path,
 )
 from openclaw.gateway.session_utils import (
     SessionsListOptions,
@@ -388,6 +389,7 @@ class SessionsResetMethod:
         
         Params:
         - key: Session key (required)
+        - archiveTranscript: Archive before deleting (default: true)
         
         Returns:
         - { ok: true, key: str, sessionId: str }
@@ -396,16 +398,33 @@ class SessionsResetMethod:
         if not key:
             raise ValueError("key is required")
         
+        archive_transcript = params.get("archiveTranscript", True)
+        
         target = resolve_gateway_session_store_target(key)
         new_session_id = str(uuid.uuid4())
         now_ms = int(time.time() * 1000)
         
+        # Get old session ID before reset
+        old_session_id = None
+        store_data = load_session_store(target.store_path)
+        entry = store_data.get(target.canonical_key)
+        if entry:
+            old_session_id = entry.session_id
+        
         def mutator(store: Dict[str, SessionEntry]) -> None:
             entry = store.get(target.canonical_key)
-            if not entry:
-                raise ValueError(f"Session not found: {key}")
             
-            # Preserve configuration fields
+            # If session doesn't exist yet, create a new one (graceful handling)
+            if not entry:
+                logger.info(f"Session not found for reset, creating new session: {key}")
+                reset_entry = SessionEntry(
+                    session_id=new_session_id,
+                    updated_at=now_ms
+                )
+                store[target.canonical_key] = reset_entry
+                return
+            
+            # Preserve configuration fields from existing session
             preserved = {
                 "thinking_level": entry.thinking_level,
                 "verbose_level": entry.verbose_level,
@@ -436,6 +455,25 @@ class SessionsResetMethod:
             store[target.canonical_key] = reset_entry
         
         update_session_store(target.store_path, mutator)
+        
+        # Delete old transcript
+        if old_session_id:
+            try:
+                # Archive transcript if requested (by renaming with timestamp)
+                if archive_transcript:
+                    transcript_path = get_session_transcript_path(target.canonical_key)
+                    if transcript_path.exists():
+                        archive_name = f"{transcript_path.stem}_reset_{now_ms}{transcript_path.suffix}"
+                        archive_path = transcript_path.parent / archive_name
+                        transcript_path.rename(archive_path)
+                        logger.info(f"Archived transcript to {archive_path}")
+                else:
+                    # Delete transcript directly
+                    deleted = delete_transcript(target.canonical_key)
+                    if deleted:
+                        logger.info(f"Deleted transcript for {target.canonical_key}")
+            except Exception as e:
+                logger.warning(f"Failed to delete transcript for {target.canonical_key}: {e}")
         
         return {
             "ok": True,

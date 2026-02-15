@@ -82,6 +82,145 @@ class DaemonService:
             return f"com.openclaw.{self.service_name}" in result.stdout
         except Exception:
             return False
+    
+    def install(self, working_dir: Optional[Path] = None, python_path: Optional[Path] = None) -> bool:
+        """Install service.
+        
+        Args:
+            working_dir: Working directory (default: current directory)
+            python_path: Python interpreter path (default: current interpreter)
+        
+        Returns:
+            True if successful
+        """
+        return install_service(self.service_name, working_dir, python_path)
+    
+    def uninstall(self) -> bool:
+        """Uninstall service.
+        
+        Returns:
+            True if successful
+        """
+        return uninstall_service(self.service_name)
+    
+    def start(self) -> bool:
+        """Start service.
+        
+        Returns:
+            True if successful
+        """
+        if not self.is_installed():
+            raise RuntimeError("Service not installed")
+        
+        if self.platform == "Linux":
+            return self._start_systemd()
+        elif self.platform == "Darwin":
+            return self._start_launchd()
+        return False
+    
+    def stop(self) -> bool:
+        """Stop service.
+        
+        Returns:
+            True if successful
+        """
+        if not self.is_installed():
+            return True  # Already stopped
+        
+        if self.platform == "Linux":
+            return self._stop_systemd()
+        elif self.platform == "Darwin":
+            return self._stop_launchd()
+        return False
+    
+    def restart(self) -> bool:
+        """Restart service.
+        
+        Returns:
+            True if successful
+        """
+        if not self.is_installed():
+            raise RuntimeError("Service not installed")
+        
+        if self.platform == "Linux":
+            return self._restart_systemd()
+        elif self.platform == "Darwin":
+            return self._restart_launchd()
+        return False
+    
+    def _start_systemd(self) -> bool:
+        """Start systemd service."""
+        import subprocess
+        try:
+            subprocess.run(
+                ["systemctl", "start", self.service_name],
+                check=True,
+                capture_output=True
+            )
+            return True
+        except Exception:
+            return False
+    
+    def _stop_systemd(self) -> bool:
+        """Stop systemd service."""
+        import subprocess
+        try:
+            subprocess.run(
+                ["systemctl", "stop", self.service_name],
+                check=True,
+                capture_output=True
+            )
+            return True
+        except Exception:
+            return False
+    
+    def _restart_systemd(self) -> bool:
+        """Restart systemd service."""
+        import subprocess
+        try:
+            subprocess.run(
+                ["systemctl", "restart", self.service_name],
+                check=True,
+                capture_output=True
+            )
+            return True
+        except Exception:
+            return False
+    
+    def _start_launchd(self) -> bool:
+        """Start launchd service."""
+        import subprocess
+        plist_file = Path(f"~/Library/LaunchAgents/com.openclaw.{self.service_name}.plist").expanduser()
+        try:
+            subprocess.run(
+                ["launchctl", "start", f"com.openclaw.{self.service_name}"],
+                check=True,
+                capture_output=True
+            )
+            return True
+        except Exception:
+            return False
+    
+    def _stop_launchd(self) -> bool:
+        """Stop launchd service."""
+        import subprocess
+        try:
+            subprocess.run(
+                ["launchctl", "stop", f"com.openclaw.{self.service_name}"],
+                check=True,
+                capture_output=True
+            )
+            return True
+        except Exception:
+            return False
+    
+    def _restart_launchd(self) -> bool:
+        """Restart launchd service."""
+        # Launchd doesn't have a direct restart, so stop and start
+        self._stop_launchd()
+        import time
+        time.sleep(1)
+        return self._start_launchd()
 
 
 def install_service(

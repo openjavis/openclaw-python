@@ -32,8 +32,9 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-import websockets
-from websockets.server import WebSocketServerProtocol
+# Use aiohttp for unified HTTP + WebSocket server (matches openclaw-ts)
+from aiohttp import web, WSMsgType
+import aiohttp
 
 from openclaw.gateway.auth import (
     AuthMode,
@@ -67,12 +68,13 @@ logger = logging.getLogger(__name__)
 
 
 class GatewayConnection:
-    """Represents a single WebSocket connection"""
+    """Represents a single WebSocket connection (aiohttp WebSocketResponse)"""
 
-    def __init__(self, websocket: WebSocketServerProtocol, config: ClawdbotConfig, gateway: "GatewayServer" = None):
+    def __init__(self, websocket: web.WebSocketResponse, config: ClawdbotConfig, gateway: "GatewayServer" = None, remote_addr: str = ""):
         self.websocket = websocket
         self.config = config
         self.gateway = gateway  # Reference to parent gateway server
+        self.remote_addr = remote_addr  # Store remote address for logging
         self.authenticated = False
         self.client_info: dict[str, Any] | None = None
         self.protocol_version = 1
@@ -100,12 +102,14 @@ class GatewayConnection:
                 "id": request_id,
                 "result": payload,
             }
-        await self.websocket.send(json.dumps(response))
+        # aiohttp: send_str instead of send
+        await self.websocket.send_str(json.dumps(response))
 
     async def send_event(self, event: str, payload: Any = None) -> None:
         """Send event frame"""
         event_frame = EventFrame(event=event, payload=payload)
-        await self.websocket.send(event_frame.model_dump_json())
+        # aiohttp: send_str instead of send
+        await self.websocket.send_str(event_frame.model_dump_json())
 
     async def handle_message(self, message: str) -> None:
         """Handle incoming message"""
@@ -233,9 +237,9 @@ class GatewayConnection:
                     nonce=connect_req.deviceIdentity.get("nonce")
                 )
             
-            # Get client IP
-            remote_addr = self.websocket.remote_address
-            client_ip = remote_addr[0] if remote_addr else None
+            # Get client IP (remote_addr is already stored in __init__)
+            # self.remote_addr is a string like "127.0.0.1:12345"
+            client_ip = self.remote_addr.split(':')[0] if self.remote_addr else None
             
             # Check if local direct (bypass auth for loopback)
             if client_ip and is_loopback_address(client_ip):
@@ -481,13 +485,20 @@ class GatewayServer:
         # Broadcast to all WebSocket clients using standardized format
         await self.broadcast_event("agent", event.to_dict())
 
-    async def handle_connection(self, websocket: WebSocketServerProtocol) -> None:
-        """Handle new WebSocket connection with auth challenge"""
-        connection = GatewayConnection(websocket, self.config, gateway=self)
+    async def handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
+        """Handle WebSocket upgrade and connection (aiohttp)"""
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        
+        # Get remote address
+        remote_addr = request.remote or "unknown"
+        
+        # Create connection
+        connection = GatewayConnection(ws, self.config, gateway=self, remote_addr=remote_addr)
         self.connections.add(connection)
 
         try:
-            logger.info(f"New connection from {websocket.remote_address}")
+            logger.info(f"New WebSocket connection from {remote_addr}")
             
             # Send connect challenge immediately
             connection.nonce = secrets.token_urlsafe(32)
@@ -498,18 +509,20 @@ class GatewayServer:
             })
             logger.debug(f"Sent connect.challenge with nonce")
             
-            # Handle messages
-            async for message in websocket:
-                if isinstance(message, str):
-                    await connection.handle_message(message)
-                else:
-                    logger.warning(f"Received non-text message: {type(message)}")
-        except websockets.exceptions.ConnectionClosed:
-            logger.info(f"Connection closed: {websocket.remote_address}")
+            # Handle messages (aiohttp pattern)
+            async for msg in ws:
+                if msg.type == WSMsgType.TEXT:
+                    await connection.handle_message(msg.data)
+                elif msg.type == WSMsgType.ERROR:
+                    logger.error(f"WebSocket error: {ws.exception()}")
+                    break
         except Exception as e:
             logger.error(f"Connection error: {e}", exc_info=True)
         finally:
             self.connections.discard(connection)
+            logger.info(f"Connection closed: {remote_addr}")
+        
+        return ws
 
     async def broadcast_event(self, event: str, payload: Any = None) -> None:
         """Broadcast event to all connected clients"""
@@ -552,9 +565,64 @@ class GatewayServer:
         
         return self._memory_manager
 
+    def _get_control_ui_config_script(self) -> str:
+        """Generate config injection script (matches openclaw-ts)"""
+        return """
+    <script>
+        window.__OPENCLAW_CONTROL_UI_BASE_PATH__ = "/";
+        window.__OPENCLAW_ASSISTANT_NAME__ = "OpenClaw";
+        window.__OPENCLAW_ASSISTANT_AVATAR__ = null;
+    </script>
+    """
+
+    async def serve_control_ui(self, request: web.Request) -> web.Response:
+        """Serve Control UI index.html"""
+        ui_dir = Path(__file__).parent.parent / "web" / "dist" / "control-ui"
+        index_path = ui_dir / "index.html"
+        
+        if not index_path.exists():
+            return web.Response(
+                text="Control UI not built. Run: cd openclaw/web/ui-src && npm run build",
+                status=503,
+                content_type="text/plain"
+            )
+        
+        # Read and inject config
+        html = index_path.read_text()
+        config_script = self._get_control_ui_config_script()
+        html = html.replace("</head>", f"{config_script}</head>")
+        
+        return web.Response(text=html, content_type="text/html")
+
+    async def serve_control_ui_spa(self, request: web.Request) -> web.Response:
+        """SPA fallback: serve static files or index.html"""
+        ui_dir = Path(__file__).parent.parent / "web" / "dist" / "control-ui"
+        path = request.match_info.get('path', '')
+        
+        # Check if static file exists
+        file_path = ui_dir / path
+        if file_path.is_file() and file_path.exists():
+            return web.FileResponse(file_path)
+        
+        # Fallback to index.html for SPA routing
+        return await self.serve_control_ui(request)
+    
+    async def handle_root(self, request: web.Request) -> web.Response | web.WebSocketResponse:
+        """Handle root path: WebSocket upgrade or Control UI"""
+        # Check if this is a WebSocket upgrade request
+        if request.headers.get('Upgrade', '').lower() == 'websocket':
+            return await self.handle_websocket(request)
+        
+        # Otherwise, serve Control UI
+        return await self.serve_control_ui(request)
+
     async def start(self, start_channels: bool = True, enable_tls: bool = False, cert_path: Optional[str] = None, key_path: Optional[str] = None) -> None:
         """
-        Start the Gateway server
+        Start unified Gateway server (HTTP + WebSocket on single port)
+        
+        This implementation matches openclaw-ts architecture:
+        - Single port serves both HTTP (Control UI) and WebSocket (Gateway API)
+        - Uses aiohttp for HTTP Upgrade pattern
 
         Args:
             start_channels: If True, start all enabled channels
@@ -577,12 +645,28 @@ class GatewayServer:
             logger.info("TLS/SSL enabled for Gateway server")
 
         protocol = "wss" if enable_tls else "ws"
-        logger.info(f"Starting Gateway server on {host}:{port} (TLS: {enable_tls})")
+        logger.info(f"Starting unified Gateway server on {host}:{port} (TLS: {enable_tls})")
         self.running = True
 
-        # Start HTTP server for control UI if enabled
-        if getattr(self.config.gateway, 'enable_web_ui', True):
-            await self._start_http_server()
+        # Create aiohttp application
+        app = web.Application()
+        
+        # Register routes (matches openclaw-ts architecture)
+        ui_enabled = getattr(self.config.gateway, 'enable_web_ui', True)
+        
+        if ui_enabled:
+            # Root handles both WebSocket upgrade and Control UI
+            app.router.add_get('/', self.handle_root)
+            # Dedicated WebSocket endpoint
+            app.router.add_get('/ws', self.handle_websocket)
+            # SPA fallback for all other paths
+            app.router.add_get('/{path:.*}', self.serve_control_ui_spa)
+        else:
+            # Only WebSocket endpoints
+            app.router.add_get('/', self.handle_websocket)
+            app.router.add_get('/ws', self.handle_websocket)
+        
+        logger.info(f"Routes registered: WebSocket on / and /ws, Control UI: {ui_enabled}")
 
         # Start all enabled channels
         if start_channels:
@@ -590,75 +674,74 @@ class GatewayServer:
             started = sum(1 for v in channel_results.values() if v)
             logger.info(f"Started {started}/{len(channel_results)} channels")
 
-        async with websockets.serve(self.handle_connection, host, port, ssl=ssl_context):
-            logger.info(f"Gateway server running on {protocol}://{host}:{port}")
-            logger.info(
-                f"ChannelManager: {len(self.channel_manager.list_running())} channels running"
-            )
+        # Start aiohttp server
+        runner = web.AppRunner(app)
+        await runner.setup()
+        
+        site = web.TCPSite(runner, host, port, ssl_context=ssl_context)
+        await site.start()
+        
+        logger.info(f"✓ Gateway server running on http{'s' if enable_tls else ''}://{host}:{port}")
+        logger.info(f"✓ Control UI available at http{'s' if enable_tls else ''}://{host}:{port}/")
+        logger.info(f"✓ WebSocket endpoint: {protocol}://{host}:{port}/ws")
+        logger.info(f"✓ ChannelManager: {len(self.channel_manager.list_running())} channels running")
+
+        try:
             # Keep server running
             while self.running:
                 await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            logger.info("Gateway server task cancelled, cleaning up...")
+            raise
+        finally:
+            await runner.cleanup()
 
-    async def _start_http_server(self) -> None:
-        """Start HTTP server for control UI"""
-        try:
-            import uvicorn
-            from .http_server import ControlUIServer
-            
-            ui_port = getattr(self.config.gateway, 'web_ui_port', 8080)
-            base_path = getattr(self.config.gateway, 'web_ui_base_path', '/')
-            
-            logger.info(f"Starting HTTP server for control UI on port {ui_port}")
-            
-            self.http_server = ControlUIServer(
-                gateway=self,
-                base_path=base_path,
-                ui_port=ui_port
-            )
-            
-            config = uvicorn.Config(
-                self.http_server.app,
-                host="127.0.0.1",
-                port=ui_port,
-                log_level="error",  # Reduce noise
-                access_log=False
-            )
-            
-            server = uvicorn.Server(config)
-            self.http_server_task = asyncio.create_task(server.serve())
-            
-            logger.info(f"✅ Control UI available at http://127.0.0.1:{ui_port}")
-        
-        except ImportError as e:
-            logger.warning(f"Could not start HTTP server (missing dependency): {e}")
-        except Exception as e:
-            logger.error(f"Failed to start HTTP server: {e}", exc_info=True)
+    # Removed _start_http_server - unified server now handles HTTP + WebSocket on single port
     
     async def stop(self) -> None:
-        """Stop the Gateway server"""
-        logger.info("Stopping Gateway server")
+        """Stop the Gateway server gracefully"""
+        logger.info("Stopping Gateway server gracefully...")
         self.running = False
 
         # Stop HTTP server if running
         if self.http_server_task:
+            logger.debug("Stopping HTTP server...")
             try:
                 self.http_server_task.cancel()
-                await self.http_server_task
+                await asyncio.wait_for(self.http_server_task, timeout=2.0)
             except asyncio.CancelledError:
-                pass
+                logger.debug("HTTP server task cancelled")
+            except asyncio.TimeoutError:
+                logger.warning("HTTP server stop timed out")
             except Exception as e:
                 logger.error(f"Error stopping HTTP server: {e}")
 
-        # Stop all channels first
-        await self.channel_manager.stop_all()
-        logger.info("All channels stopped")
+        # Close all WebSocket connections first
+        if self.connections:
+            logger.debug(f"Closing {len(self.connections)} WebSocket connections...")
+            close_tasks = []
+            for connection in list(self.connections):
+                try:
+                    close_tasks.append(connection.websocket.close())
+                except Exception as e:
+                    logger.debug(f"Error preparing connection close: {e}")
+            
+            if close_tasks:
+                try:
+                    await asyncio.wait_for(asyncio.gather(*close_tasks, return_exceptions=True), timeout=2.0)
+                except asyncio.TimeoutError:
+                    logger.warning("WebSocket close timed out")
+            
+            self.connections.clear()
 
-        # Close all WebSocket connections
-        for connection in list(self.connections):
-            try:
-                await connection.websocket.close()
-            except Exception as e:
-                logger.error(f"Error closing connection: {e}")
+        # Stop all channels
+        logger.debug("Stopping all channels...")
+        try:
+            await asyncio.wait_for(self.channel_manager.stop_all(), timeout=3.0)
+            logger.debug("All channels stopped")
+        except asyncio.TimeoutError:
+            logger.warning("Channel stop timed out")
+        except Exception as e:
+            logger.error(f"Error stopping channels: {e}")
 
-        self.connections.clear()
-        logger.info("Gateway server stopped")
+        logger.info("Gateway server stopped gracefully")
