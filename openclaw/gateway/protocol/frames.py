@@ -71,8 +71,9 @@ class ConnectRequest(BaseModel):
 
 
 class HelloResponse(BaseModel):
-    """Connection handshake response"""
+    """Connection handshake response (matches TypeScript GatewayHelloOk)"""
 
+    type: Literal["hello-ok"] = "hello-ok"  # Required by WebUI
     protocol: int = Field(..., description="Negotiated protocol version")
     server: dict[str, Any] = Field(..., description="Server information")
     features: dict[str, bool] = Field(default_factory=dict, description="Enabled features")

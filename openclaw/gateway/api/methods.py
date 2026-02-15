@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from .chat import CHAT_METHODS
+
 logger = logging.getLogger(__name__)
 
 
@@ -293,3 +295,28 @@ class ChannelsStopMethod:
             "properties": {"channelId": {"type": "string"}},
             "required": ["channelId"],
         }
+
+
+# =============================================================================
+# Method Registry
+# =============================================================================
+
+# All available methods
+ALL_METHODS = [
+    ConnectMethod(),
+    PingMethod(),
+    AgentMethod(),
+    HealthMethod(),
+    ChannelsListMethod(),
+    ChannelsStartMethod(),
+    ChannelsStopMethod(),
+    *CHAT_METHODS,  # Add all chat methods
+]
+
+# Method lookup by name
+METHOD_REGISTRY = {method.name: method for method in ALL_METHODS}
+
+
+def get_method_handler(method_name: str):
+    """Get method handler by name"""
+    return METHOD_REGISTRY.get(method_name)

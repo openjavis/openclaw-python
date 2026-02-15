@@ -85,25 +85,17 @@ class GatewayConnection:
     async def send_response(
         self, request_id: str | int, payload: Any = None, error: ErrorShape | None = None
     ) -> None:
-        """Send response frame (supports JSON-RPC 2.0 format)"""
-        # Send JSON-RPC 2.0 format
-        if error:
-            response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {
-                    "code": -32603 if error.code == "INTERNAL_ERROR" else -32601,
-                    "message": error.message,
-                },
-            }
-        else:
-            response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": payload,
-            }
+        """Send response frame (Gateway protocol format)"""
+        # Use Gateway protocol ResponseFrame format
+        response_frame = ResponseFrame(
+            type="res",
+            id=request_id,
+            ok=error is None,
+            payload=payload,
+            error=error
+        )
         # aiohttp: send_str instead of send
-        await self.websocket.send_str(json.dumps(response))
+        await self.websocket.send_str(response_frame.model_dump_json())
 
     async def send_event(self, event: str, payload: Any = None) -> None:
         """Send event frame"""
