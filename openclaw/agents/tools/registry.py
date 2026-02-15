@@ -109,6 +109,24 @@ class ToolRegistry:
 
     def register(self, tool: AgentTool) -> None:
         """Register a tool"""
+        # Wrap old-style tools that override execute() with old signature
+        import inspect
+        if hasattr(tool, 'execute'):
+            sig = inspect.signature(tool.execute)
+            params = list(sig.parameters.keys())
+            
+            # Old signature: execute(self, params) or execute(self, args)
+            # New signature: execute(self, tool_call_id, params, signal, on_update)
+            if 'self' in params and len(params) == 2 and 'tool_call_id' not in params:
+                # This is an old tool, wrap it
+                original_execute = tool.execute
+                
+                async def wrapped_execute(tool_call_id: str, params: dict, signal=None, on_update=None):
+                    # Call old execute with just params
+                    return await original_execute(params)
+                
+                tool.execute = wrapped_execute
+        
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> AgentTool | None:
