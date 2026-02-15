@@ -316,7 +316,21 @@ class MultiProviderRuntime:
         # Format tools for provider
         tools_param = []
         if tools:
-            formatted_tools = self.tool_adapter.to_tool_definitions(tools)
+            # Convert AgentTool objects to dict format
+            tools_dict = [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.get_schema() if hasattr(tool, 'get_schema') else tool.parameters,
+                    "execute": tool.execute if hasattr(tool, 'execute') else None,
+                }
+                for tool in tools
+            ]
+            
+            # Apply tool adapter for standardization
+            adapted_tools = ToolDefinitionAdapter.to_tool_definitions(tools_dict)
+            
+            # Format for provider API
             tools_param = [
                 {
                     "type": "function",
@@ -326,7 +340,7 @@ class MultiProviderRuntime:
                         "parameters": t.get("parameters", {}),
                     },
                 }
-                for t in formatted_tools
+                for t in adapted_tools
             ]
             logger.info(f"🔧 Formatted {len(tools_param)} tools for provider")
         
