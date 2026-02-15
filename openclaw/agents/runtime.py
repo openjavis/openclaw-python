@@ -392,13 +392,31 @@ class MultiProviderRuntime:
                         
                         # Execute tool
                         try:
-                            # Call with correct signature: execute(tool_call_id, params, signal, on_update)
-                            result = await tool.execute(
-                                tool_call_id=tc["id"],
-                                params=tc["arguments"],
-                                signal=None,
-                                on_update=None
-                            )
+                            # Check tool signature to handle both old and new tools
+                            import inspect
+                            sig = inspect.signature(tool.execute)
+                            params_list = list(sig.parameters.keys())
+                            
+                            # New tools: execute(tool_call_id, params, signal, on_update)
+                            # Old tools: execute(params) or execute(args)
+                            if 'tool_call_id' in params_list:
+                                # New signature
+                                result = await tool.execute(
+                                    tool_call_id=tc["id"],
+                                    params=tc["arguments"],
+                                    signal=None,
+                                    on_update=None
+                                )
+                            elif 'params' in params_list:
+                                # Old signature with 'params'
+                                result = await tool.execute(params=tc["arguments"])
+                            elif 'args' in params_list:
+                                # Old signature with 'args'
+                                result = await tool.execute(args=tc["arguments"])
+                            else:
+                                # Fallback: just pass arguments
+                                result = await tool.execute(tc["arguments"])
+                            
                             result_str = str(result)
                             
                             # Add tool message to session
