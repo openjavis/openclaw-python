@@ -67,6 +67,8 @@ class EventType(str, Enum):
     MESSAGE_START = "message_start"
     MESSAGE_UPDATE = "message_update"
     MESSAGE_END = "message_end"
+    TEXT = "text"  # Generic text event
+    TEXT_DELTA = "text_delta"  # Text streaming delta
     
     # ========================================================================
     # Tool Execution Events
