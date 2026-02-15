@@ -391,59 +391,92 @@ class ChatSendMethod:
             
             logger.info(f"🔧 Loaded {len(tools)} tools for agent turn")
             
-            # Execute agent turn - runtime.run_turn will load session history internally
+            # Execute agent turn using AgentSession (pi-ai style)
             logger.info(f"Executing agent turn for session {session_key}, run_id={run_id}, message={message[:50]}...")
             
             # Broadcast start event
             broadcast_chat_event(connection, "start", run_id, session_key)
             
+            # Import AgentSession
+            from openclaw.agents.agent_session import AgentSession
+            
+            # Create AgentSession (pi-ai style automatic tool loop)
+            agent_session = AgentSession(
+                session=session,
+                runtime=runtime,
+                tools=tools,
+                system_prompt=None,  # System prompt already in runtime
+                max_iterations=5,
+                max_tokens=4096,
+                max_turns=None,
+            )
+            
             # Stream response
             assistant_response = ""
             tool_calls_log = []
             
-            async for event in runtime.run_turn(session, message, tools):
-                event_type_str = str(event.type).split(".")[-1] if hasattr(event.type, 'value') else str(event.type)
-                logger.info(f"Received event: type={event_type_str}, has_data={hasattr(event, 'data')}")
+            # Collect events from AgentSession
+            events_queue = []
+            
+            def collect_event(event):
+                """Collect events synchronously"""
+                events_queue.append(event)
+            
+            # Subscribe to events
+            unsubscribe = agent_session.subscribe(collect_event)
+            
+            try:
+                # Execute prompt (pi-ai style)
+                await agent_session.prompt(message)
                 
-                # Get event data
-                event_data = event.data if hasattr(event, 'data') else (event.payload if hasattr(event, 'payload') else {})
-                
-                if event_type_str in ("AGENT_TEXT", "TEXT_DELTA", "text_delta"):
-                    # Accumulate text and broadcast delta
-                    # Handle both {"text": "..."} and {"delta": {"text": "..."}}
-                    text_chunk = ""
-                    if isinstance(event_data.get("text"), str):
-                        text_chunk = event_data["text"]
-                    elif isinstance(event_data.get("delta"), dict):
-                        text_chunk = event_data["delta"].get("text", "")
-                    elif isinstance(event_data.get("delta"), str):
-                        text_chunk = event_data["delta"]
+                # Process collected events
+                for event in events_queue:
+                    event_type_str = str(event.type).split(".")[-1] if hasattr(event.type, 'value') else str(event.type)
+                    logger.info(f"Received event: type={event_type_str}, has_data={hasattr(event, 'data')}")
                     
-                    if text_chunk:
-                        assistant_response += text_chunk
-                        # Broadcast text delta
-                        broadcast_chat_event(connection, "delta", run_id, session_key, text=text_chunk)
-                        logger.info(f"Broadcasting text delta: {text_chunk[:50]}...")
+                    # Get event data
+                    event_data = event.data if hasattr(event, 'data') else (event.payload if hasattr(event, 'payload') else {})
+                    
+                    if event_type_str in ("AGENT_TEXT", "TEXT_DELTA", "text_delta"):
+                        # Accumulate text and broadcast delta
+                        # Handle both {"text": "..."} and {"delta": {"text": "..."}}
+                        text_chunk = ""
+                        if isinstance(event_data.get("text"), str):
+                            text_chunk = event_data["text"]
+                        elif isinstance(event_data.get("delta"), dict):
+                            text_chunk = event_data["delta"].get("text", "")
+                        elif isinstance(event_data.get("delta"), str):
+                            text_chunk = event_data["delta"]
+                        
+                        if text_chunk:
+                            assistant_response += text_chunk
+                            # Broadcast text delta
+                            broadcast_chat_event(connection, "delta", run_id, session_key, text=text_chunk)
+                            logger.info(f"Broadcasting text delta: {text_chunk[:50]}...")
+                    
+                    elif event_type_str in ("TOOL_USE", "tool_use"):
+                        # Tool called
+                        if event_data:
+                            tool_calls_log.append(event_data)
+                            logger.info(f"Tool called: {event_data.get('name', 'unknown')}")
+                    
+                    elif event_type_str in ("AGENT_TURN_COMPLETE", "TURN_END", "turn_complete"):
+                        # Agent turn completed
+                        logger.info(f"Agent turn completed for {session_key}, accumulated text: {len(assistant_response)} chars")
+                    
+                    elif event_type_str in ("ERROR", "error"):
+                        # Error occurred
+                        error_msg = event_data.get("message", "Unknown error") if event_data else "Unknown error"
+                        logger.error(f"Agent error: {error_msg}")
+                        broadcast_chat_event(
+                            connection, "error", run_id, session_key, error_message=error_msg
+                        )
                 
-                elif event_type_str in ("TOOL_USE", "tool_use"):
-                    # Tool called
-                    if event_data:
-                        tool_calls_log.append(event_data)
-                        logger.info(f"Tool called: {event_data.get('name', 'unknown')}")
-                
-                elif event_type_str in ("AGENT_TURN_COMPLETE", "TURN_END", "turn_complete"):
-                    # Agent turn completed
-                    logger.info(f"Agent turn completed for {session_key}, accumulated text: {len(assistant_response)} chars")
-                    break
-                
-                elif event_type_str in ("ERROR", "error"):
-                    # Error occurred
-                    error_msg = event_data.get("message", "Unknown error") if event_data else "Unknown error"
-                    logger.error(f"Agent error: {error_msg}")
-                    broadcast_chat_event(
-                        connection, "error", run_id, session_key, error_message=error_msg
-                    )
-                    return
+                logger.info(f"Processed all {len(events_queue)} events from AgentSession")
+            
+            finally:
+                # Unsubscribe from events
+                unsubscribe()
             
             # Build assistant message
             logger.info(f"Building final message with {len(assistant_response)} chars")
