@@ -143,7 +143,11 @@ def set_session_manager(manager: SessionManager) -> None:
 
 
 def _map_model_name(model: str) -> str:
-    """Map OpenAI model name to internal model name"""
+    """Map OpenAI model name to internal model name."""
+    # Keep provider-qualified model IDs as-is (for custom/OpenAI-compatible models).
+    if "/" in model:
+        return model
+
     model_mapping = {
         "gpt-4": "openai/gpt-4",
         "gpt-4-turbo": "openai/gpt-4-turbo",
@@ -155,7 +159,27 @@ def _map_model_name(model: str) -> str:
         "claude-sonnet-4": "anthropic/claude-sonnet-4",
     }
 
-    return model_mapping.get(model, f"anthropic/{model}")
+    # For unknown short names, let runtime apply its own default provider rules.
+    return model_mapping.get(model, model)
+
+
+def _extract_text_from_event(event) -> str:
+    """Extract text from runtime events across provider/event variants."""
+    data = getattr(event, "data", None)
+    if not isinstance(data, dict):
+        return ""
+
+    delta = data.get("delta")
+    if isinstance(delta, dict) and isinstance(delta.get("text"), str):
+        return delta["text"]
+
+    if isinstance(data.get("text"), str):
+        return data["text"]
+
+    if isinstance(data.get("content"), str):
+        return data["content"]
+
+    return ""
 
 
 @router.get("/models", response_model=ModelsResponse)
@@ -244,21 +268,27 @@ async def chat_completions(
                     "",  # Empty message since we already added messages
                     max_tokens=request.max_tokens or 4096,
                 ):
-                    if event.type == "assistant":
-                        delta = event.data.get("delta", {})
-                        if "text" in delta:
-                            chunk = ChatCompletionChunk(
-                                id=completion_id,
-                                created=created,
-                                model=request.model,
-                                choices=[
-                                    ChatCompletionChunkChoice(
-                                        index=0,
-                                        delta=ChatCompletionChunkDelta(content=delta["text"]),
-                                    )
-                                ],
-                            )
-                            yield f"data: {chunk.model_dump_json()}\n\n"
+                    event_type = str(getattr(event, "type", "")).lower()
+                    if "error" in event_type:
+                        detail = ""
+                        if isinstance(getattr(event, "data", None), dict):
+                            detail = event.data.get("message") or event.data.get("error") or ""
+                        raise RuntimeError(detail or "Model execution failed")
+
+                    text_delta = _extract_text_from_event(event)
+                    if text_delta:
+                        chunk = ChatCompletionChunk(
+                            id=completion_id,
+                            created=created,
+                            model=request.model,
+                            choices=[
+                                ChatCompletionChunkChoice(
+                                    index=0,
+                                    delta=ChatCompletionChunkDelta(content=text_delta),
+                                )
+                            ],
+                        )
+                        yield f"data: {chunk.model_dump_json()}\n\n"
 
                 # Send final chunk
                 final_chunk = ChatCompletionChunk(
@@ -285,16 +315,31 @@ async def chat_completions(
         # Non-streaming response
         try:
             response_text = ""
+            error_seen = False
 
             async for event in runtime.run_turn(
                 session,
                 "",  # Empty message since we already added messages
                 max_tokens=request.max_tokens or 4096,
             ):
-                if event.type == "assistant":
-                    delta = event.data.get("delta", {})
-                    if "text" in delta:
-                        response_text += delta["text"]
+                event_type = str(getattr(event, "type", "")).lower()
+                if "error" in event_type:
+                    error_seen = True
+                    continue
+
+                text_delta = _extract_text_from_event(event)
+                if text_delta:
+                    response_text += text_delta
+
+            if not response_text:
+                if error_seen:
+                    raise HTTPException(status_code=502, detail="Model execution failed")
+                if request.max_tokens is not None and request.max_tokens < 128:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Model returned no final content. Increase max_tokens (e.g., 256+).",
+                    )
+                raise HTTPException(status_code=502, detail="Model returned empty response")
 
             # Estimate tokens (rough approximation)
             prompt_tokens = sum(len(m.content) // 4 for m in request.messages)
@@ -318,6 +363,8 @@ async def chat_completions(
                 ),
             )
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Chat completion error: {e}")
             raise HTTPException(status_code=500, detail=str(e))

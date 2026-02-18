@@ -6,8 +6,15 @@ import logging
 from datetime import UTC, datetime, timezone
 from typing import Any, Optional
 
-from telegram import Update, BotCommand, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, ContextTypes, MessageHandler, CommandHandler, CallbackQueryHandler, filters
+from telegram import Update, BotCommand, BotCommandScopeDefault, MenuButtonCommands, InlineKeyboardMarkup, InlineKeyboardButton, KeyboardButton, ReplyKeyboardMarkup
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+    CallbackQueryHandler,
+)
 
 from ..chat_commands import ChatCommandExecutor, ChatCommandParser
 from ..base import ChannelCapabilities, ChannelPlugin, InboundMessage
@@ -62,10 +69,11 @@ class TelegramChannel(ChannelPlugin):
         # Create application
         self._app = Application.builder().token(self._bot_token).build()
 
-        # Add command handlers
+        # Register handlers
         self._app.add_handler(CommandHandler("start", self._handle_start_command))
         self._app.add_handler(CommandHandler("help", self._handle_help_command))
         self._app.add_handler(CommandHandler("new", self._handle_new_command))
+
         self._app.add_handler(CommandHandler("reset", self._handle_reset_command))
         self._app.add_handler(CommandHandler("status", self._handle_status_command))
         self._app.add_handler(CommandHandler("model", self._handle_model_command))
@@ -411,6 +419,7 @@ class TelegramChannel(ChannelPlugin):
     async def _handle_telegram_media(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
+
         """Handle incoming media messages (photo, video, audio, document)"""
         if not update.message:
             return
@@ -515,9 +524,7 @@ class TelegramChannel(ChannelPlugin):
                 reply_to_message_id=message.message_id
             )
 
-    async def _handle_telegram_message(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def _handle_telegram_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle incoming Telegram text message"""
         if not update.message or not update.message.text:
             return
@@ -525,64 +532,98 @@ class TelegramChannel(ChannelPlugin):
         message = update.message
         chat = message.chat
         sender = message.from_user
+        text = message.text
 
-        # Determine chat type first
-        is_group = chat.type in ["group", "supergroup"]
-        is_dm = not is_group
+        logger.info(f"Received message from {sender.id} ({sender.username}): {text}")
         
-        # DM Access Control - Check dm_policy for direct messages
-        if is_dm and self._config:
+        # Determine DM policy
+        dm_policy = "pairing"
+        if self._config:
             dm_policy = self._config.get("dmPolicy") or self._config.get("dm_policy") or "pairing"
-            
-            # Handle disabled DM
-            if dm_policy == "disabled":
-                logger.info(f"DM from {sender.id} blocked by dm_policy=disabled")
-                return
-            
-            # Handle pairing and allowlist modes
-            if dm_policy in ["pairing", "allowlist"]:
-                # Check if sender is allowed
-                is_allowed = await self._check_sender_allowed(
-                    sender_id=str(sender.id),
-                    username=sender.username,
-                    dm_policy=dm_policy
-                )
-                
-                if not is_allowed:
-                    # For pairing mode, create pairing request
-                    if dm_policy == "pairing":
-                        await self._handle_pairing_request(sender, chat, context)
-                    else:
-                        # For allowlist mode, just ignore
-                        logger.info(f"DM from {sender.id} blocked by dm_policy={dm_policy}")
-                    return
 
-        # Check for chat commands
-        if self._command_parser:
-            command = self._command_parser.parse(message.text)
-            if command and self._command_executor:
+        # Check authorization
+        if not await self._check_sender_allowed(str(sender.id), sender.username, dm_policy):
+            if dm_policy == "pairing":
+                await self._handle_pairing_request(sender, chat, context)
+            else:
+                logger.warning(f"Unauthorized access attempt from {sender.id}")
+            return
+
+        # Handle Menu Buttons (Map text to commands)
+        command_map = {
+            "💬 New Chat": "new",
+            "📊 Status": "status",
+            "❓ Help": "help",
+            "🤖 Switch Model": "model",
+             # Legacy fallback if icons change
+            "New Chat": "new",
+            "Status": "status",
+            "Help": "help",
+            "Switch Model": "model"
+        }
+        
+        command = None
+        args = []
+        
+        if text in command_map:
+            command = command_map[text]
+        elif text.startswith("/"):
+            parts = text.split()
+            command = parts[0][1:]
+            args = parts[1:]
+            
+        if command:
+            # Handle built-in commands directly to keep Telegram UX stable.
+            if command == "help":
+                await self._handle_help_command(update, context)
+                return
+            if command == "new":
+                await self._handle_new_command(update, context)
+                return
+            if command == "status":
+                await self._handle_status_command(update, context)
+                return
+            if command == "model":
+                await self._handle_model_command(update, context)
+                return
+            if command == "reset":
+                await self._handle_reset_command(update, context)
+                return
+            if command == "start":
+                await self._handle_start_command(update, context)
+                return
+
+            # Optional executor path for non-built-in slash commands.
+            if self._command_executor:
+                from ..chat_commands import ChatCommand
+
                 session_id = f"telegram:{chat.id}"
                 user_id = str(sender.id)
-                is_owner = self._owner_id and user_id == self._owner_id
+                is_owner = bool(self._owner_id and user_id == self._owner_id)
+                chat_command = ChatCommand(name=command, args=args, raw_text=text)
 
                 try:
                     response = await self._command_executor.execute(
-                        command, session_id, user_id, is_owner
+                        chat_command, session_id, user_id, is_owner
                     )
-                    await self._app.bot.send_message(
-                        chat_id=chat.id,
-                        text=response,
-                        reply_to_message_id=message.message_id
-                    )
+                    if response:
+                        await self._app.bot.send_message(
+                            chat_id=chat.id,
+                            text=response,
+                            reply_to_message_id=message.message_id,
+                        )
                     return
                 except Exception as e:
                     logger.error(f"Error executing command: {e}", exc_info=True)
                     await self._app.bot.send_message(
                         chat_id=chat.id,
                         text=f"❌ Error: {str(e)}",
-                        reply_to_message_id=message.message_id
+                        reply_to_message_id=message.message_id,
                     )
                     return
+
+            # Ignore unknown command text when no executor is configured.
+            return
 
         # Determine chat type
         chat_type = "direct"
@@ -609,8 +650,24 @@ class TelegramChannel(ChannelPlugin):
             },
         )
 
+        logger.info(f"Trace: preparing to handle message {inbound.message_id}")
+
         # Pass to handler
-        await self._handle_message(inbound)
+        try:
+            await self._handle_message(inbound)
+            logger.info(f"Trace: message {inbound.message_id} handled")
+        except Exception as e:
+            logger.error(f"Error in _handle_message: {e}", exc_info=True)
+
+    async def indicate_typing(self, chat_id: str) -> None:
+        """Show typing status in chat"""
+        if not self._app:
+            return
+        try:
+            await self._app.bot.send_chat_action(chat_id=chat_id, action="typing")
+        except Exception as e:
+            logger.warning(f"Failed to send typing action: {e}")
+
 
     async def _register_bot_commands(self):
         """Register bot commands with Telegram API (makes them visible in client)"""
@@ -661,24 +718,35 @@ class TelegramChannel(ChannelPlugin):
             one_time_keyboard=False
         )
 
-    async def _handle_start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /start command"""
-        welcome_message = (
-            "👋 *Welcome to OpenClaw AI Assistant!*\n\n"
-            "I am a powerful AI assistant that can help you:\n"
-            "• 💬 Intelligent conversation\n"
-            "• 📝 Process documents and files\n"
-            "• 🔍 Search and query information\n"
-            "• 🛠️ Execute various tasks\n\n"
-            "Send any message to start a conversation, or use /help to see more commands."
+    async def _send_welcome(self, chat_id: int) -> None:
+        """Send welcome message"""
+        welcome_text = (
+            "👋 *Hello! I am ClawdBot.*\n\n"
+            "I am your personal AI assistant. You can chat with me naturally.\n\n"
+            "*Available Commands:*\n"
+            "/new - Start a new conversation\n"
+            "/model - Switch AI Model\n"
+            "/status - Check system status\n"
+            "/help - Show this help message"
         )
         
-        # Send welcome message with quick reply keyboard
-        await update.message.reply_text(
-            welcome_message,
+        # Consistent Menu Buttons with Icons
+        keyboard = [
+            [KeyboardButton("💬 New Chat"), KeyboardButton("📊 Status")],
+            [KeyboardButton("❓ Help"), KeyboardButton("🤖 Switch Model")]
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        
+        await self._app.bot.send_message(
+            chat_id=chat_id, 
+            text=welcome_text, 
             parse_mode="Markdown",
-            reply_markup=self._get_quick_reply_keyboard()
+            reply_markup=reply_markup
         )
+
+    async def _handle_start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /start command"""
+        await self._send_welcome(update.effective_chat.id)
 
     async def _handle_help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
@@ -703,7 +771,6 @@ class TelegramChannel(ChannelPlugin):
 
     async def _handle_new_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /new command - start new conversation"""
-        user_id = update.effective_user.id
         
         # Create inline keyboard for confirmation
         keyboard = [
@@ -990,7 +1057,7 @@ class TelegramChannel(ChannelPlugin):
                 )
                 
                 # Add user info
-                user_info = f"\n📱 **Your Info**\n"
+                user_info = "\n📱 **Your Info**\n"
                 user_info += f"- Telegram ID: `{sender.id}`\n"
                 if sender.username:
                     user_info += f"- Username: @{sender.username}\n"

@@ -38,11 +38,39 @@ class OpenAIProvider(LLMProvider):
     def provider_name(self) -> str:
         return "openai"
 
+    def _get_gcp_token(self) -> str:
+        """Get GCP access token using ADC"""
+        try:
+            import google.auth
+            from google.auth.transport.requests import Request
+
+            credentials, project = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            credentials.refresh(Request())
+            return credentials.token
+        except Exception as e:
+            logger.error(f"Failed to get GCP token: {e}")
+            raise
+
     def get_client(self) -> AsyncOpenAI:
         """Get OpenAI client"""
-        if self._client is None:
-            api_key = self.api_key or os.getenv("OPENAI_API_KEY", "not-needed")
+        # Check if we need to use GCP ADC
+        # If configured with "gcp_adc" or based on flag, we refresh token every time
+        api_key = self.api_key or os.getenv("OPENAI_API_KEY", "not-needed")
+        
+        use_adc = api_key == "gcp_adc" or os.getenv("CLAWDBOT_AGENT__API_KEY") == "gcp_adc"
 
+        if use_adc:
+            # Always get fresh token for ADC
+            api_key = self._get_gcp_token()
+            return AsyncOpenAI(
+                api_key=api_key,
+                base_url=self.base_url
+            )
+
+        # Standard static client caching
+        if self._client is None:
             # Support custom base URL for OpenAI-compatible APIs
             kwargs = {"api_key": api_key}
             if self.base_url:
@@ -51,6 +79,7 @@ class OpenAIProvider(LLMProvider):
             self._client = AsyncOpenAI(**kwargs)
 
         return self._client
+
 
     async def stream(
         self,

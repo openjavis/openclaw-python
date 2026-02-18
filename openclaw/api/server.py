@@ -16,7 +16,9 @@ from pydantic import BaseModel
 
 from ..agents.runtime import AgentRuntime
 from ..agents.session import SessionManager
+from ..channels.base import InboundMessage
 from ..channels.registry import ChannelRegistry
+from ..config.settings import get_settings
 from ..monitoring import get_health_check, get_metrics
 from .openai_compat import (
     router as openai_router,
@@ -132,12 +134,124 @@ async def lifespan(app: FastAPI):
 
         health.register("channels", channels_check, critical=False)
 
+        # Start registered channels
+        settings = get_settings()
+        for channel in _channel_registry.get_all():
+            try:
+                # Prepare config for channel
+                channel_config = {}
+                
+                # Add specific config based on channel type
+                if channel.id == "telegram":
+                    if settings.channels.telegram.bot_token:
+                        channel_config = {
+                            "botToken": settings.channels.telegram.bot_token,
+                            "model": settings.channels.telegram.model or settings.agent.model,
+                            "allowFrom": settings.channels.telegram.allow_from
+                        }
+                    else:
+                        logger.warning("Telegram bot token not configured, skipping startup")
+                        continue
+                
+                # Start channel
+                logger.info(f"Starting channel: {channel.id}")
+                await channel.start(channel_config)
+                
+                # Register message handler
+                if hasattr(channel, "set_message_handler"):
+                    channel.set_message_handler(_handle_inbound_message)
+                    logger.info(f"Set message handler for {channel.id}")
+                else:
+                    logger.warning(f"Channel {channel.id} does not support set_message_handler")
+
+                # Wire chat command executor when supported.
+                if hasattr(channel, "set_command_executor") and _session_manager and _runtime:
+                    channel.set_command_executor(_session_manager, _runtime)
+                    logger.info(f"Set command executor for {channel.id}")
+
+            except Exception as e:
+                logger.error(f"Failed to start channel {channel.id}: {e}", exc_info=True)
+
+
     # Initialize OpenAI-compatible API
     _init_openai_compat()
 
     yield
 
     logger.info("Shutting down API server...")
+
+
+async def _handle_inbound_message(message: InboundMessage) -> None:
+    """Handle inbound message from channel"""
+    if not _runtime or not _session_manager:
+        logger.error("Runtime or SessionManager not initialized")
+        return
+
+    try:
+        # Get session ID (channel:id)
+        # Using simple ID strategy for now
+        session_id = f"{message.channel_id}:{message.chat_id}"
+        
+        # Get session
+        session = _session_manager.get_session(session_id)
+        
+        # Determine text
+        text = message.text or ""
+        # TODO: Handle files if needed
+        if not text:
+            # Media handling is routed elsewhere; just log metadata here.
+            logger.info(f"Received non-text message {message.message_id}: {message.metadata}")
+            return
+
+        # Run agent
+        response_text = ""
+        error_seen = False
+
+        # Indicate typing if supported
+        channel = _channel_registry.get(message.channel_id) if _channel_registry else None
+        if channel and hasattr(channel, "indicate_typing"):
+            await channel.indicate_typing(message.chat_id)
+
+        async for event in _runtime.run_turn(session, text):
+            event_type_str = str(event.type).lower()
+
+            if "error" in event_type_str:
+                error_seen = True
+                continue
+
+            if not isinstance(event.data, dict):
+                continue
+
+            delta = event.data.get("delta")
+            if isinstance(delta, dict) and isinstance(delta.get("text"), str):
+                response_text += delta["text"]
+                continue
+
+            if isinstance(event.data.get("text"), str):
+                response_text += event.data["text"]
+            elif isinstance(event.data.get("content"), str):
+                response_text += event.data["content"]
+
+        logger.info(f"DEBUG: Final response length: {len(response_text)}")
+
+        # Send response if not empty
+        if response_text:
+            if channel:
+                await channel.send_text(message.chat_id, response_text, reply_to=message.message_id)
+            else:
+                logger.warning(f"Channel {message.channel_id} not found for response")
+        else:
+            if channel:
+                fallback = "⚠️ I could not generate a response. Please try again."
+                if error_seen:
+                    fallback = "⚠️ I hit an internal model error. Please try again shortly."
+                await channel.send_text(message.chat_id, fallback, reply_to=message.message_id)
+            logger.warning("Agent generated empty response")
+
+        
+    except Exception as e:
+        logger.error(f"Error handling message: {e}", exc_info=True)
+
 
 
 def create_app() -> FastAPI:
@@ -251,27 +365,60 @@ def create_app() -> FastAPI:
             # Get or create session
             session = _session_manager.get_session(request.session_id)
 
-            # Create runtime with specified model if provided
+            # Use global runtime by default; override per-request model if provided
             runtime = _runtime
             if request.model:
                 runtime = AgentRuntime(model=request.model)
 
             # Execute agent turn
             response_text = ""
+            error_seen = False
             async for event in runtime.run_turn(
                 session, request.message, max_tokens=request.max_tokens
             ):
-                if event.type == "assistant" and "delta" in event.data:
-                    delta = event.data["delta"]
-                    if "text" in delta:
-                        response_text += delta["text"]
+                event_type_str = str(event.type).lower()
+
+                if "error" in event_type_str:
+                    error_seen = True
+                    continue
+
+                if not isinstance(event.data, dict):
+                    continue
+
+                delta = event.data.get("delta")
+                if isinstance(delta, dict) and isinstance(delta.get("text"), str):
+                    response_text += delta["text"]
+                    continue
+
+                if isinstance(event.data.get("text"), str):
+                    response_text += event.data["text"]
+                elif isinstance(event.data.get("content"), str):
+                    response_text += event.data["content"]
+
+            if not response_text:
+                if error_seen:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Model execution failed; no response generated.",
+                    )
+                if request.max_tokens is not None and request.max_tokens < 128:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Model returned no final content. Increase max_tokens (e.g., 256+).",
+                    )
+                raise HTTPException(status_code=502, detail="Model returned empty response.")
 
             return AgentResponse(
                 session_id=request.session_id,
                 response=response_text,
-                metadata={"message_count": len(session.messages), "model": runtime.model},
+                metadata={
+                    "message_count": len(session.messages),
+                    "model": getattr(runtime, "model", getattr(runtime, "model_str", None)),
+                },
             )
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Agent chat error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
@@ -288,7 +435,6 @@ def create_app() -> FastAPI:
 
         sessions = _session_manager.list_sessions()
         return {"sessions": sessions, "count": len(sessions)}
-
     @app.get("/agent/sessions/{session_id}", tags=["Agent"])
     async def get_session(session_id: str, api_key: str = Depends(verify_api_key)):
         """
@@ -432,6 +578,7 @@ def create_app() -> FastAPI:
     return app
 
 
+
 async def run_api_server(
     host: str = "0.0.0.0",
     port: int = 8000,
@@ -439,16 +586,7 @@ async def run_api_server(
     session_manager: SessionManager | None = None,
     channel_registry: ChannelRegistry | None = None,
 ) -> None:
-    """
-    Run API server
-
-    Args:
-        host: Host to bind to
-        port: Port to bind to
-        runtime: Optional AgentRuntime instance
-        session_manager: Optional SessionManager instance
-        channel_registry: Optional ChannelRegistry instance
-    """
+    """Run API server."""
     import uvicorn
 
     # Set global instances

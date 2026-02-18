@@ -79,6 +79,13 @@ class ToolsConfig(BaseModel):
     exec: ExecConfig = Field(default_factory=ExecConfig, description="Exec tool configuration")
 
 
+class TelegramConfig(BaseModel):
+    """Telegram configuration"""
+    bot_token: str | None = Field(default=None, description="Telegram Bot Token")
+    model: str | None = Field(default=None, description="Model to use for Telegram")
+    allow_from: list[str] = Field(default_factory=list, description="List of allowed user IDs/usernames")
+
+
 class ChannelConfig(BaseModel):
     """Channel configuration"""
 
@@ -90,6 +97,7 @@ class ChannelConfig(BaseModel):
     health_check_interval: float = Field(
         default=60.0, gt=0, description="Health check interval in seconds"
     )
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig, description="Telegram configuration")
 
 
 class MonitoringConfig(BaseModel):
@@ -185,6 +193,7 @@ class Settings(BaseSettings):
     )
 
     # Additional settings
+    google_api_key: str | None = Field(default=None, description="Google API key for Gemini providers")
     debug: bool = Field(default=False, description="Enable debug mode")
 
     @field_validator("workspace_dir")

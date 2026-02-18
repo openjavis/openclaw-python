@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import typer
+from dotenv import load_dotenv
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
@@ -19,6 +21,7 @@ from rich.table import Table
 from .agents.runtime import AgentRuntime
 from .agents.session import SessionManager
 from .channels.registry import ChannelRegistry
+from .channels.telegram.channel import TelegramChannel
 from .config.settings import Settings, get_settings
 from .monitoring import get_health_check, get_metrics, setup_logging
 
@@ -40,7 +43,6 @@ app.add_typer(config_app, name="config")
 def config_show(format: str = typer.Option("table", help="Output format (table/json)")):
     """Show current configuration"""
     settings = get_settings()
-
     if format == "json":
         console.print_json(json.dumps(settings.to_dict(), default=str))
         return
@@ -313,7 +315,14 @@ def api_start(
         from .agents.session import SessionManager
         from .api import run_api_server
 
+        load_dotenv()
+
         settings = get_settings()
+        if settings.google_api_key:
+            os.environ.setdefault("GOOGLE_API_KEY", settings.google_api_key)
+            os.environ.setdefault("GEMINI_API_KEY", settings.google_api_key)
+        elif os.getenv("GOOGLE_API_KEY"):
+            os.environ.setdefault("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", ""))
 
         # Setup logging
         setup_logging(
@@ -327,6 +336,11 @@ def api_start(
         )
         session_manager = SessionManager(settings.workspace_dir)
         channel_registry = ChannelRegistry()
+        
+        # Register enabled channels
+        if "telegram" in settings.channels.enabled:
+            channel_registry.register(TelegramChannel())
+
 
         # Run server
         console.print(
