@@ -108,14 +108,26 @@ def check_vertex_upstream(base_url: str, model: str) -> tuple[bool, str]:
         return False, f"status={status}, body={body}"
 
     try:
-        content = body["choices"][0]["message"].get("content")
+        message = body["choices"][0].get("message", {})
+        content = message.get("content")
+        reasoning_content = message.get("reasoning_content")
     except Exception:
+        message = {}
         content = None
+        reasoning_content = None
 
-    if not content:
-        return False, f"no content in response: {body}"
+    response_text = ""
+    if isinstance(content, str) and content.strip():
+        response_text = content.strip()
+    elif isinstance(reasoning_content, str) and reasoning_content.strip():
+        # Some upstream models stream reasoning only when max_tokens is small.
+        response_text = reasoning_content.strip()
 
-    return True, f"status={status}, content={content!r}"
+    if not response_text:
+        return False, f"no content/reasoning_content in response: {body}"
+
+    preview = response_text[:120] + ("..." if len(response_text) > 120 else "")
+    return True, f"status={status}, text={preview!r}"
 
 
 def check_openclaw_service(api_base: str, service_model: str) -> list[tuple[str, bool, str]]:
