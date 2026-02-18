@@ -1,12 +1,24 @@
 """Telegram channel implementation"""
+
 from __future__ import annotations
 
 
+import json
 import logging
 from datetime import UTC, datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
-from telegram import Update, BotCommand, BotCommandScopeDefault, MenuButtonCommands, InlineKeyboardMarkup, InlineKeyboardButton, KeyboardButton, ReplyKeyboardMarkup
+from telegram import (
+    Update,
+    BotCommand,
+    BotCommandScopeDefault,
+    MenuButtonCommands,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -48,6 +60,43 @@ class TelegramChannel(ChannelPlugin):
         self._command_handler: Optional[TelegramCommandHandler] = None
         self._config: Optional[dict] = None
 
+    def _state_file(self) -> Path:
+        """Path for Telegram runtime state persisted on host."""
+        state_dir = Path.home() / ".openclaw" / "channels"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        return state_dir / "telegram.json"
+
+    def _load_persisted_model(self) -> str | None:
+        """Load persisted Telegram model override from disk."""
+        state_file = self._state_file()
+        if not state_file.exists():
+            return None
+        try:
+            data = json.loads(state_file.read_text())
+            model = data.get("model")
+            if isinstance(model, str) and model.strip():
+                return model.strip()
+        except Exception as e:
+            logger.warning(f"Failed to read Telegram state file {state_file}: {e}")
+        return None
+
+    def _persist_model(self, model: str) -> None:
+        """Persist Telegram model override to disk."""
+        state_file = self._state_file()
+        payload = {
+            "model": model,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        state_file.write_text(json.dumps(payload, indent=2))
+
+    def _current_model(self) -> str:
+        """Current model used by Telegram channel."""
+        if self._config and isinstance(self._config.get("model"), str):
+            model = self._config.get("model", "").strip()
+            if model:
+                return model
+        return "google/gemini-3-flash-preview"
+
     async def start(self, config: dict[str, Any]) -> None:
         """Start Telegram bot"""
         self._bot_token = config.get("botToken") or config.get("bot_token")
@@ -58,6 +107,11 @@ class TelegramChannel(ChannelPlugin):
         # Get owner ID for command permissions
         self._owner_id = config.get("ownerId") or config.get("owner_id")
         self._config = config
+
+        persisted_model = self._load_persisted_model()
+        if persisted_model:
+            self._config["model"] = persisted_model
+            logger.info(f"Loaded persisted Telegram model override: {persisted_model}")
 
         logger.info("Starting Telegram channel...")
 
@@ -77,13 +131,13 @@ class TelegramChannel(ChannelPlugin):
         self._app.add_handler(CommandHandler("reset", self._handle_reset_command))
         self._app.add_handler(CommandHandler("status", self._handle_status_command))
         self._app.add_handler(CommandHandler("model", self._handle_model_command))
-        
+
         # Register i18n language switching handlers
         register_lang_handlers(self._app)
-        
+
         # Register extended commands
         register_extended_commands(self._app)
-        
+
         # Add callback query handler for inline keyboards
         self._app.add_handler(CallbackQueryHandler(self._handle_callback_query))
 
@@ -93,65 +147,49 @@ class TelegramChannel(ChannelPlugin):
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_telegram_message)
         )
         # Handle photo messages
-        self._app.add_handler(
-            MessageHandler(filters.PHOTO, self._handle_telegram_media)
-        )
+        self._app.add_handler(MessageHandler(filters.PHOTO, self._handle_telegram_media))
         # Handle video messages
-        self._app.add_handler(
-            MessageHandler(filters.VIDEO, self._handle_telegram_media)
-        )
+        self._app.add_handler(MessageHandler(filters.VIDEO, self._handle_telegram_media))
         # Handle audio messages
         self._app.add_handler(
             MessageHandler(filters.AUDIO | filters.VOICE, self._handle_telegram_media)
         )
         # Handle document messages
-        self._app.add_handler(
-            MessageHandler(filters.Document.ALL, self._handle_telegram_media)
-        )
+        self._app.add_handler(MessageHandler(filters.Document.ALL, self._handle_telegram_media))
 
         # Start bot
         await self._app.initialize()
         await self._app.start()
-        
+
         # Get bot info after initialization
         bot_info = await self._app.bot.get_me()
         account_id = str(bot_info.id)
         logger.info(f"Bot initialized: @{bot_info.username} (ID: {account_id})")
-        
+
         # Create a minimal config dict for command handler
         cmd_config = {
             "channels": {
-                "telegram": {
-                    "accounts": {
-                        account_id: {
-                            "allowFrom": []  # Allow all for now
-                        }
-                    }
-                }
+                "telegram": {"accounts": {account_id: {"allowFrom": []}}}  # Allow all for now
             },
-            "agents": {
-                "defaults": {
-                    "model": config.get("model", "google/gemini-3-pro-preview")
-                }
-            }
+            "agents": {"defaults": {"model": config.get("model", "google/gemini-3-pro-preview")}},
         }
-        
+
         self._command_handler = TelegramCommandHandler(cmd_config, account_id, None)
-        
+
         # Delete any existing webhook and clear pending updates to avoid conflicts
         # This ensures clean state when switching from webhook to polling mode
         await self._app.bot.delete_webhook(drop_pending_updates=True)
         logger.info("Cleared webhook and pending updates")
-        
+
         # Register bot commands with Telegram
         await self._register_bot_commands()
-        
+
         # Set bot menu button (optional)
         await self._setup_menu_button()
-        
+
         await self._app.updater.start_polling(
             allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=False  # We already dropped them above
+            drop_pending_updates=False,  # We already dropped them above
         )
 
         self._running = True
@@ -180,18 +218,18 @@ class TelegramChannel(ChannelPlugin):
             # Try Markdown first, fallback to plain text if parsing fails
             try:
                 message = await self._app.bot.send_message(
-                    chat_id=chat_id, 
-                    text=text, 
+                    chat_id=chat_id,
+                    text=text,
                     reply_to_message_id=int(reply_to) if reply_to else None,
-                    parse_mode="Markdown"
+                    parse_mode="Markdown",
                 )
             except Exception as markdown_error:
                 logger.debug(f"Markdown parsing failed, sending as plain text: {markdown_error}")
                 # Fallback to plain text
                 message = await self._app.bot.send_message(
-                    chat_id=chat_id, 
-                    text=text, 
-                    reply_to_message_id=int(reply_to) if reply_to else None
+                    chat_id=chat_id,
+                    text=text,
+                    reply_to_message_id=int(reply_to) if reply_to else None,
                 )
 
             return str(message.message_id)
@@ -201,15 +239,19 @@ class TelegramChannel(ChannelPlugin):
             raise
 
     async def send_photo(
-        self, target: str, photo, caption: str | None = None, 
-        reply_to: str | None = None, keyboard=None
+        self,
+        target: str,
+        photo,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        keyboard=None,
     ) -> str:
         """Send photo message"""
         if not self._app:
             raise RuntimeError("Telegram channel not started")
-        
+
         chat_id = int(target) if target.lstrip("-").isdigit() else target
-        
+
         try:
             message = await self._app.bot.send_photo(
                 chat_id=chat_id,
@@ -217,7 +259,7 @@ class TelegramChannel(ChannelPlugin):
                 caption=caption,
                 parse_mode="Markdown" if caption else None,
                 reply_to_message_id=int(reply_to) if reply_to else None,
-                reply_markup=keyboard
+                reply_markup=keyboard,
             )
             return str(message.message_id)
         except Exception as e:
@@ -225,15 +267,19 @@ class TelegramChannel(ChannelPlugin):
             raise
 
     async def send_video(
-        self, target: str, video, caption: str | None = None,
-        reply_to: str | None = None, keyboard=None
+        self,
+        target: str,
+        video,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        keyboard=None,
     ) -> str:
         """Send video message"""
         if not self._app:
             raise RuntimeError("Telegram channel not started")
-        
+
         chat_id = int(target) if target.lstrip("-").isdigit() else target
-        
+
         try:
             message = await self._app.bot.send_video(
                 chat_id=chat_id,
@@ -241,7 +287,7 @@ class TelegramChannel(ChannelPlugin):
                 caption=caption,
                 parse_mode="Markdown" if caption else None,
                 reply_to_message_id=int(reply_to) if reply_to else None,
-                reply_markup=keyboard
+                reply_markup=keyboard,
             )
             return str(message.message_id)
         except Exception as e:
@@ -249,15 +295,19 @@ class TelegramChannel(ChannelPlugin):
             raise
 
     async def send_document(
-        self, target: str, document, caption: str | None = None,
-        reply_to: str | None = None, keyboard=None
+        self,
+        target: str,
+        document,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        keyboard=None,
     ) -> str:
         """Send document/file message"""
         if not self._app:
             raise RuntimeError("Telegram channel not started")
-        
+
         chat_id = int(target) if target.lstrip("-").isdigit() else target
-        
+
         try:
             message = await self._app.bot.send_document(
                 chat_id=chat_id,
@@ -265,7 +315,7 @@ class TelegramChannel(ChannelPlugin):
                 caption=caption,
                 parse_mode="Markdown" if caption else None,
                 reply_to_message_id=int(reply_to) if reply_to else None,
-                reply_markup=keyboard
+                reply_markup=keyboard,
             )
             return str(message.message_id)
         except Exception as e:
@@ -273,22 +323,21 @@ class TelegramChannel(ChannelPlugin):
             raise
 
     async def send_audio(
-        self, target: str, audio, caption: str | None = None,
-        reply_to: str | None = None
+        self, target: str, audio, caption: str | None = None, reply_to: str | None = None
     ) -> str:
         """Send audio message"""
         if not self._app:
             raise RuntimeError("Telegram channel not started")
-        
+
         chat_id = int(target) if target.lstrip("-").isdigit() else target
-        
+
         try:
             message = await self._app.bot.send_audio(
                 chat_id=chat_id,
                 audio=audio,
                 caption=caption,
                 parse_mode="Markdown" if caption else None,
-                reply_to_message_id=int(reply_to) if reply_to else None
+                reply_to_message_id=int(reply_to) if reply_to else None,
             )
             return str(message.message_id)
         except Exception as e:
@@ -296,21 +345,20 @@ class TelegramChannel(ChannelPlugin):
             raise
 
     async def send_location(
-        self, target: str, latitude: float, longitude: float,
-        reply_to: str | None = None
+        self, target: str, latitude: float, longitude: float, reply_to: str | None = None
     ) -> str:
         """Send location message"""
         if not self._app:
             raise RuntimeError("Telegram channel not started")
-        
+
         chat_id = int(target) if target.lstrip("-").isdigit() else target
-        
+
         try:
             message = await self._app.bot.send_location(
                 chat_id=chat_id,
                 latitude=latitude,
                 longitude=longitude,
-                reply_to_message_id=int(reply_to) if reply_to else None
+                reply_to_message_id=int(reply_to) if reply_to else None,
             )
             return str(message.message_id)
         except Exception as e:
@@ -318,43 +366,44 @@ class TelegramChannel(ChannelPlugin):
             raise
 
     async def send_poll(
-        self, target: str, question: str, options: list[str],
-        is_anonymous: bool = True, reply_to: str | None = None
+        self,
+        target: str,
+        question: str,
+        options: list[str],
+        is_anonymous: bool = True,
+        reply_to: str | None = None,
     ) -> str:
         """Send poll message"""
         if not self._app:
             raise RuntimeError("Telegram channel not started")
-        
+
         chat_id = int(target) if target.lstrip("-").isdigit() else target
-        
+
         try:
             message = await self._app.bot.send_poll(
                 chat_id=chat_id,
                 question=question,
                 options=options,
                 is_anonymous=is_anonymous,
-                reply_to_message_id=int(reply_to) if reply_to else None
+                reply_to_message_id=int(reply_to) if reply_to else None,
             )
             return str(message.message_id)
         except Exception as e:
             logger.error(f"Failed to send poll: {e}")
             raise
 
-    async def send_dice(
-        self, target: str, emoji: str = "🎲",
-        reply_to: str | None = None
-    ) -> str:
+    async def send_dice(self, target: str, emoji: str = "🎲", reply_to: str | None = None) -> str:
         """Send dice/animation message (🎲🎯🏀⚽🎳🎰)"""
         if not self._app:
             raise RuntimeError("Telegram channel not started")
-        
+
         chat_id = int(target) if target.lstrip("-").isdigit() else target
-        
+
         try:
             message = await self._app.bot.send_dice(
                 chat_id=chat_id,
                 emoji=emoji,
-                reply_to_message_id=int(reply_to) if reply_to else None
+                reply_to_message_id=int(reply_to) if reply_to else None,
             )
             return str(message.message_id)
         except Exception as e:
@@ -373,10 +422,10 @@ class TelegramChannel(ChannelPlugin):
 
             # Determine if media_url is a local file path or URL
             from pathlib import Path
-            
+
             media_source = media_url
             is_local_file = False
-            
+
             # Check if it's a local file path
             if not media_url.startswith(("http://", "https://", "file://")):
                 file_path = Path(media_url).expanduser()
@@ -385,7 +434,7 @@ class TelegramChannel(ChannelPlugin):
                     media_source = open(file_path, "rb")
                     is_local_file = True
                     logger.info(f"Sending local file: {file_path}")
-            
+
             try:
                 if media_type == "photo":
                     message = await self._app.bot.send_photo(
@@ -419,7 +468,6 @@ class TelegramChannel(ChannelPlugin):
     async def _handle_telegram_media(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-
         """Handle incoming media messages (photo, video, audio, document)"""
         if not update.message:
             return
@@ -482,12 +530,18 @@ class TelegramChannel(ChannelPlugin):
             # Create message with media info
             # Format text to describe the media for the AI
             text = caption if caption else f"[User sent a {media_type}]"
-            
+
             # Add media information to text so AI knows what to do
             if media_type == "photo":
-                text = f"{text}\n\n[Image URL: {file_url}]" if caption else f"[User sent an image: {file_url}]"
+                text = (
+                    f"{text}\n\n[Image URL: {file_url}]"
+                    if caption
+                    else f"[User sent an image: {file_url}]"
+                )
             elif media_type in ["video", "audio", "voice", "document"]:
-                text = f"{text}\n\n[{media_type.capitalize()} URL: {file_url}, filename: {file_name}]"
+                text = (
+                    f"{text}\n\n[{media_type.capitalize()} URL: {file_url}, filename: {file_name}]"
+                )
 
             # Create normalized message
             inbound = InboundMessage(
@@ -498,8 +552,12 @@ class TelegramChannel(ChannelPlugin):
                 chat_id=str(chat.id),
                 chat_type=chat_type,
                 text=text,
-                timestamp=message.date.isoformat() if message.date else datetime.now(UTC).isoformat(),
-                reply_to=str(message.reply_to_message.message_id) if message.reply_to_message else None,
+                timestamp=(
+                    message.date.isoformat() if message.date else datetime.now(UTC).isoformat()
+                ),
+                reply_to=(
+                    str(message.reply_to_message.message_id) if message.reply_to_message else None
+                ),
                 metadata={
                     "username": sender.username,
                     "chat_title": chat.title,
@@ -510,6 +568,7 @@ class TelegramChannel(ChannelPlugin):
                     "file_url": file_url,
                     "mime_type": mime_type,
                     "caption": caption,
+                    "model": self._current_model(),
                 },
             )
 
@@ -521,10 +580,12 @@ class TelegramChannel(ChannelPlugin):
             await context.bot.send_message(
                 chat_id=chat.id,
                 text=f"❌ Sorry, I had trouble processing that {media_type}.",
-                reply_to_message_id=message.message_id
+                reply_to_message_id=message.message_id,
             )
 
-    async def _handle_telegram_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _handle_telegram_message(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """Handle incoming Telegram text message"""
         if not update.message or not update.message.text:
             return
@@ -535,7 +596,7 @@ class TelegramChannel(ChannelPlugin):
         text = message.text
 
         logger.info(f"Received message from {sender.id} ({sender.username}): {text}")
-        
+
         # Determine DM policy
         dm_policy = "pairing"
         if self._config:
@@ -555,23 +616,23 @@ class TelegramChannel(ChannelPlugin):
             "📊 Status": "status",
             "❓ Help": "help",
             "🤖 Switch Model": "model",
-             # Legacy fallback if icons change
+            # Legacy fallback if icons change
             "New Chat": "new",
             "Status": "status",
             "Help": "help",
-            "Switch Model": "model"
+            "Switch Model": "model",
         }
-        
+
         command = None
         args = []
-        
+
         if text in command_map:
             command = command_map[text]
         elif text.startswith("/"):
             parts = text.split()
             command = parts[0][1:]
             args = parts[1:]
-            
+
         if command:
             # Handle built-in commands directly to keep Telegram UX stable.
             if command == "help":
@@ -647,6 +708,7 @@ class TelegramChannel(ChannelPlugin):
                 "username": sender.username,
                 "chat_title": chat.title,
                 "chat_username": chat.username,
+                "model": self._current_model(),
             },
         )
 
@@ -668,7 +730,6 @@ class TelegramChannel(ChannelPlugin):
         except Exception as e:
             logger.warning(f"Failed to send typing action: {e}")
 
-
     async def _register_bot_commands(self):
         """Register bot commands with Telegram API (makes them visible in client)"""
         commands = [
@@ -678,7 +739,6 @@ class TelegramChannel(ChannelPlugin):
             BotCommand("new", "🆕 Start new conversation"),
             BotCommand("status", "📊 View status"),
             BotCommand("model", "🤖 Switch AI model"),
-            
             # Extended commands (already have handlers registered)
             BotCommand("commands", "📋 List all available commands"),
             BotCommand("context", "📖 Explain context management"),
@@ -687,11 +747,10 @@ class TelegramChannel(ChannelPlugin):
             BotCommand("verbose", "🔍 Toggle verbose mode"),
             BotCommand("reasoning", "🧠 Toggle reasoning visibility"),
             BotCommand("usage", "📊 Show usage statistics"),
-            
             # Session management
             BotCommand("reset", "🔄 Reset conversation (clear transcript)"),
         ]
-        
+
         try:
             await self._app.bot.set_my_commands(commands)
             logger.info(f"✅ Registered {len(commands)} commands with Telegram API")
@@ -712,11 +771,7 @@ class TelegramChannel(ChannelPlugin):
             [KeyboardButton("💬 New Chat"), KeyboardButton("📊 Status")],
             [KeyboardButton("❓ Help"), KeyboardButton("🤖 Switch Model")],
         ]
-        return ReplyKeyboardMarkup(
-            keyboard, 
-            resize_keyboard=True,
-            one_time_keyboard=False
-        )
+        return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
     async def _send_welcome(self, chat_id: int) -> None:
         """Send welcome message"""
@@ -729,19 +784,16 @@ class TelegramChannel(ChannelPlugin):
             "/status - Check system status\n"
             "/help - Show this help message"
         )
-        
+
         # Consistent Menu Buttons with Icons
         keyboard = [
             [KeyboardButton("💬 New Chat"), KeyboardButton("📊 Status")],
-            [KeyboardButton("❓ Help"), KeyboardButton("🤖 Switch Model")]
+            [KeyboardButton("❓ Help"), KeyboardButton("🤖 Switch Model")],
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        
+
         await self._app.bot.send_message(
-            chat_id=chat_id, 
-            text=welcome_text, 
-            parse_mode="Markdown",
-            reply_markup=reply_markup
+            chat_id=chat_id, text=welcome_text, parse_mode="Markdown", reply_markup=reply_markup
         )
 
     async def _handle_start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -763,61 +815,58 @@ class TelegramChannel(ChannelPlugin):
             "• Multi-turn conversation supported\n\n"
             "_Need help? Visit documentation or contact support team._"
         )
-        
-        await update.message.reply_text(
-            help_message,
-            parse_mode="Markdown"
-        )
+
+        await update.message.reply_text(help_message, parse_mode="Markdown")
 
     async def _handle_new_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /new command - start new conversation"""
-        
+
         # Create inline keyboard for confirmation
         keyboard = [
             [
                 InlineKeyboardButton("✅ Confirm", callback_data="new_confirm"),
-                InlineKeyboardButton("❌ Cancel", callback_data="new_cancel")
+                InlineKeyboardButton("❌ Cancel", callback_data="new_cancel"),
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         await update.message.reply_text(
             "🆕 *Start New Conversation*\n\n"
             "This will clear the current conversation history.\n"
             "Are you sure you want to continue?",
             parse_mode="Markdown",
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
         )
-    
+
     async def _handle_reset_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /reset command - reset session (clear transcript)"""
         try:
             # Build session key from chat info
             chat_id = update.effective_chat.id
             chat_type = update.effective_chat.type
-            
+
             # Construct session key matching gateway format
             # Format: {channel}:{account_id}:{scope}:{id}
             if chat_type == "private":
                 session_key = f"telegram:{self.id}:dm:main:{chat_id}"
             else:
                 session_key = f"telegram:{self.id}:group:{chat_id}"
-            
+
             logger.info(f"[{self.id}] Reset requested for session: {session_key}")
-            
+
             # Call gateway sessions.reset method
             try:
                 from openclaw.gateway.api.sessions_methods import SessionsResetMethod
-                
+
                 reset_method = SessionsResetMethod()
                 result = await reset_method.execute(
                     connection=None,
                     params={
                         "key": session_key,
-                        "archiveTranscript": True  # Archive old transcript
-                    }
+                        "archiveTranscript": True,  # Archive old transcript
+                    },
                 )
-                
+
                 if result.get("ok"):
                     new_session_id = result.get("sessionId", "unknown")
                     message = (
@@ -830,7 +879,7 @@ class TelegramChannel(ChannelPlugin):
                 else:
                     message = "⚠️ **Reset Partial**\n\nSession was reset, but something went wrong."
                     logger.warning(f"[{self.id}] Session reset returned non-ok result")
-                    
+
             except Exception as reset_err:
                 logger.error(f"[{self.id}] Failed to reset session via API: {reset_err}")
                 message = (
@@ -838,21 +887,20 @@ class TelegramChannel(ChannelPlugin):
                     "Unable to reset session. Please try again or contact support.\n"
                     f"Error: `{str(reset_err)[:100]}`"
                 )
-            
+
             await update.message.reply_text(message, parse_mode="Markdown")
-            
+
         except Exception as e:
             logger.error(f"[{self.id}] Error handling reset command: {e}")
             await update.message.reply_text(
-                "❌ **Error**\n\nFailed to process reset command.",
-                parse_mode="Markdown"
+                "❌ **Error**\n\nFailed to process reset command.", parse_mode="Markdown"
             )
 
     async def _handle_status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /status command"""
         # Get current model from config
-        current_model = self._config.get("model", "google/gemini-3-pro-preview") if self._config else "unknown"
-        
+        current_model = self._current_model()
+
         status_message = (
             "📊 *Bot Status*\n\n"
             f"🤖 Current Model: `{current_model}`\n"
@@ -861,15 +909,12 @@ class TelegramChannel(ChannelPlugin):
             f"📡 Connection: Normal\n\n"
             "_System running normally_"
         )
-        
-        await update.message.reply_text(
-            status_message,
-            parse_mode="Markdown"
-        )
+
+        await update.message.reply_text(status_message, parse_mode="Markdown")
 
     async def _handle_model_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /model command - show model selection"""
-        current_model = self._config.get("model", "google/gemini-3-flash-preview") if self._config else "unknown"
+        current_model = self._current_model()
 
         model_options = [
             ("gemini_flash", "🌟 Gemini 3 Flash", "google/gemini-3-flash-preview"),
@@ -892,26 +937,26 @@ class TelegramChannel(ChannelPlugin):
             f"Current Model: `{current_model}`\n\n"
             f"Choose the model to use:",
             parse_mode="Markdown",
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
         )
 
     async def _handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle callback queries from inline keyboards"""
         from telegram.error import BadRequest
-        
+
         query = update.callback_query
         await query.answer()
-        
+
         data = query.data
         logger.info(f"Callback query: {data}")
-        
+
         if data == "new_confirm":
             # Clear conversation history (implement this in session manager)
             try:
                 await query.edit_message_text(
                     "✅ *New Conversation Started*\n\n"
                     "Conversation history cleared. Send a message to start a new conversation!",
-                    parse_mode="Markdown"
+                    parse_mode="Markdown",
                 )
             except BadRequest as e:
                 if "Message is not modified" in str(e):
@@ -919,19 +964,18 @@ class TelegramChannel(ChannelPlugin):
                     logger.debug(f"Message already shows correct state for {data}")
                 else:
                     raise
-        
+
         elif data == "new_cancel":
             try:
                 await query.edit_message_text(
-                    "❌ *Cancelled*\n\nContinuing current conversation.",
-                    parse_mode="Markdown"
+                    "❌ *Cancelled*\n\nContinuing current conversation.", parse_mode="Markdown"
                 )
             except BadRequest as e:
                 if "Message is not modified" in str(e):
                     logger.debug(f"Message already shows correct state for {data}")
                 else:
                     raise
-        
+
         elif data.startswith("model_"):
             model_name = data.replace("model_", "")
             model_map = {
@@ -946,6 +990,10 @@ class TelegramChannel(ChannelPlugin):
                 # Update config (this would need to be persisted)
                 if self._config:
                     self._config["model"] = model_id
+                    try:
+                        self._persist_model(model_id)
+                    except Exception as persist_err:
+                        logger.warning(f"Failed to persist Telegram model override: {persist_err}")
 
                 try:
                     await query.edit_message_text(
@@ -953,27 +1001,24 @@ class TelegramChannel(ChannelPlugin):
                         f"Now using: {display_name}\n"
                         f"Model ID: `{model_id}`\n\n"
                         f"_New messages will use this model_",
-                        parse_mode="Markdown"
+                        parse_mode="Markdown",
                     )
                 except BadRequest as e:
                     if "Message is not modified" in str(e):
                         logger.debug(f"Message already shows correct state for model {model_name}")
                     else:
                         raise
-    
+
     async def _check_sender_allowed(
-        self,
-        sender_id: str,
-        username: str | None,
-        dm_policy: str
+        self, sender_id: str, username: str | None, dm_policy: str
     ) -> bool:
         """Check if sender is allowed based on dm_policy and allowFrom.
-        
+
         Args:
             sender_id: Telegram user ID
             username: Telegram username (without @)
             dm_policy: DM policy (pairing, allowlist, open)
-            
+
         Returns:
             True if sender is allowed
         """
@@ -982,53 +1027,51 @@ class TelegramChannel(ChannelPlugin):
             allow_from = self._config.get("allowFrom") or self._config.get("allow_from") or []
             if "*" in allow_from:
                 return True
-        
+
         # Get allowFrom from config
         allow_from_config = self._config.get("allowFrom") or self._config.get("allow_from") or []
-        
+
         # Get allowFrom from pairing store
         try:
             from ...pairing.pairing_store import read_channel_allow_from_store
+
             allow_from_store = read_channel_allow_from_store("telegram")
         except Exception as e:
             logger.warning(f"Failed to read pairing store: {e}")
             allow_from_store = []
-        
+
         # Merge both lists
         effective_allow_from = list(set(allow_from_config + allow_from_store))
-        
+
         # Check wildcard
         if "*" in effective_allow_from:
             return True
-        
+
         # Check if empty and not in pairing mode
         if not effective_allow_from and dm_policy == "allowlist":
             return False
-        
+
         # Check sender ID match
         if sender_id in effective_allow_from:
             return True
-        
+
         # Check username match (case-insensitive)
         if username:
             username_lower = username.lower()
             username_with_at = f"@{username_lower}"
-            
+
             for allowed in effective_allow_from:
                 allowed_lower = allowed.lower()
                 if allowed_lower == username_lower or allowed_lower == username_with_at:
                     return True
-        
+
         return False
-    
+
     async def _handle_pairing_request(
-        self,
-        sender: Any,
-        chat: Any,
-        context: ContextTypes.DEFAULT_TYPE
+        self, sender: Any, chat: Any, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Handle pairing request for unauthorized DM.
-        
+
         Args:
             sender: Telegram User object
             chat: Telegram Chat object
@@ -1037,7 +1080,7 @@ class TelegramChannel(ChannelPlugin):
         try:
             from ...pairing.pairing_store import upsert_channel_pairing_request
             from ...pairing.messages import format_pairing_request_message
-            
+
             # Create or update pairing request
             result = upsert_channel_pairing_request(
                 channel="telegram",
@@ -1047,44 +1090,41 @@ class TelegramChannel(ChannelPlugin):
                     "first_name": sender.first_name or "",
                     "last_name": sender.last_name or "",
                     "full_name": sender.full_name or "",
-                }
+                },
             )
-            
+
             pairing_code = result["code"]
             is_new_request = result["created"]
-            
+
             # Only send message for new requests
             if is_new_request:
-                logger.info(f"Created pairing request for telegram:{sender.id}, code={pairing_code}")
-                
+                logger.info(
+                    f"Created pairing request for telegram:{sender.id}, code={pairing_code}"
+                )
+
                 # Format pairing message
                 message_text = format_pairing_request_message(
-                    code=pairing_code,
-                    channel="telegram",
-                    id_label=f"Telegram ID ({sender.id})"
+                    code=pairing_code, channel="telegram", id_label=f"Telegram ID ({sender.id})"
                 )
-                
+
                 # Add user info
                 user_info = "\n📱 **Your Info**\n"
                 user_info += f"- Telegram ID: `{sender.id}`\n"
                 if sender.username:
                     user_info += f"- Username: @{sender.username}\n"
                 user_info += f"- Name: {sender.full_name}\n"
-                
+
                 message_text = message_text.replace(
-                    "This code expires in 1 hour.",
-                    user_info + "\nThis code expires in 1 hour."
+                    "This code expires in 1 hour.", user_info + "\nThis code expires in 1 hour."
                 )
-                
+
                 # Send to user
                 await context.bot.send_message(
-                    chat_id=chat.id,
-                    text=message_text,
-                    parse_mode="Markdown"
+                    chat_id=chat.id, text=message_text, parse_mode="Markdown"
                 )
             else:
                 logger.debug(f"Pairing request already exists for telegram:{sender.id}")
-                
+
         except Exception as e:
             logger.error(f"Failed to handle pairing request: {e}", exc_info=True)
             await context.bot.send_message(

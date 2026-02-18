@@ -1,6 +1,7 @@
 """
 FastAPI REST API server for ClawdBot
 """
+
 from __future__ import annotations
 
 
@@ -39,6 +40,19 @@ _runtime: AgentRuntime | None = None
 _session_manager: SessionManager | None = None
 _channel_registry: ChannelRegistry | None = None
 _runtime_tools: list[Any] = []
+
+
+def _extract_model_override(metadata: Any) -> str | None:
+    """Extract per-message model override from channel metadata."""
+    if not isinstance(metadata, dict):
+        return None
+
+    candidate = metadata.get("model")
+    if not isinstance(candidate, str):
+        return None
+
+    normalized = candidate.strip()
+    return normalized or None
 
 
 def set_runtime(runtime: AgentRuntime) -> None:
@@ -152,23 +166,23 @@ async def lifespan(app: FastAPI):
             try:
                 # Prepare config for channel
                 channel_config = {}
-                
+
                 # Add specific config based on channel type
                 if channel.id == "telegram":
                     if settings.channels.telegram.bot_token:
                         channel_config = {
                             "botToken": settings.channels.telegram.bot_token,
                             "model": settings.channels.telegram.model or settings.agent.model,
-                            "allowFrom": settings.channels.telegram.allow_from
+                            "allowFrom": settings.channels.telegram.allow_from,
                         }
                     else:
                         logger.warning("Telegram bot token not configured, skipping startup")
                         continue
-                
+
                 # Start channel
                 logger.info(f"Starting channel: {channel.id}")
                 await channel.start(channel_config)
-                
+
                 # Register message handler
                 if hasattr(channel, "set_message_handler"):
                     channel.set_message_handler(_handle_inbound_message)
@@ -183,7 +197,6 @@ async def lifespan(app: FastAPI):
 
             except Exception as e:
                 logger.error(f"Failed to start channel {channel.id}: {e}", exc_info=True)
-
 
     # Initialize OpenAI-compatible API
     _init_openai_compat()
@@ -203,10 +216,10 @@ async def _handle_inbound_message(message: InboundMessage) -> None:
         # Get session ID (channel:id)
         # Using simple ID strategy for now
         session_id = f"{message.channel_id}:{message.chat_id}"
-        
+
         # Get session
         session = _session_manager.get_session(session_id)
-        
+
         # Determine text
         text = message.text or ""
         # TODO: Handle files if needed
@@ -220,12 +233,19 @@ async def _handle_inbound_message(message: InboundMessage) -> None:
         error_seen = False
         tool_result_fallback = ""
 
+        runtime = _runtime
+        model_override = _extract_model_override(message.metadata)
+
+        if model_override:
+            runtime = AgentRuntime(model=model_override)
+            logger.info(f"Using model override from channel message: {model_override}")
+
         # Indicate typing if supported
         channel = _channel_registry.get(message.channel_id) if _channel_registry else None
         if channel and hasattr(channel, "indicate_typing"):
             await channel.indicate_typing(message.chat_id)
 
-        async for event in _runtime.run_turn(session, text, tools=_runtime_tools):
+        async for event in runtime.run_turn(session, text, tools=_runtime_tools):
             event_type_str = str(event.type).lower()
 
             if "error" in event_type_str:
@@ -273,10 +293,8 @@ async def _handle_inbound_message(message: InboundMessage) -> None:
                 await channel.send_text(message.chat_id, fallback, reply_to=message.message_id)
             logger.warning("Agent generated empty response")
 
-        
     except Exception as e:
         logger.error(f"Error handling message: {e}", exc_info=True)
-
 
 
 def create_app() -> FastAPI:
@@ -473,6 +491,7 @@ def create_app() -> FastAPI:
 
         sessions = _session_manager.list_sessions()
         return {"sessions": sessions, "count": len(sessions)}
+
     @app.get("/agent/sessions/{session_id}", tags=["Agent"])
     async def get_session(session_id: str, api_key: str = Depends(verify_api_key)):
         """
@@ -614,7 +633,6 @@ def create_app() -> FastAPI:
         }
 
     return app
-
 
 
 async def run_api_server(

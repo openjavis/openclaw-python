@@ -2,9 +2,11 @@
 OpenAI provider implementation
 """
 
+import json
 import logging
 import os
 from collections.abc import AsyncIterator
+from typing import Any
 
 from openai import AsyncOpenAI
 
@@ -58,16 +60,13 @@ class OpenAIProvider(LLMProvider):
         # Check if we need to use GCP ADC
         # If configured with "gcp_adc" or based on flag, we refresh token every time
         api_key = self.api_key or os.getenv("OPENAI_API_KEY", "not-needed")
-        
+
         use_adc = api_key == "gcp_adc" or os.getenv("CLAWDBOT_AGENT__API_KEY") == "gcp_adc"
 
         if use_adc:
             # Always get fresh token for ADC
             api_key = self._get_gcp_token()
-            return AsyncOpenAI(
-                api_key=api_key,
-                base_url=self.base_url
-            )
+            return AsyncOpenAI(api_key=api_key, base_url=self.base_url)
 
         # Standard static client caching
         if self._client is None:
@@ -80,6 +79,102 @@ class OpenAIProvider(LLMProvider):
 
         return self._client
 
+    def _serialize_tool_call(self, tool_call: dict[str, Any], fallback_id: str) -> dict[str, Any]:
+        """Normalize tool call shape for OpenAI Chat Completions."""
+        tool_call_id = str(tool_call.get("id") or fallback_id)
+
+        function_payload = tool_call.get("function")
+        if isinstance(function_payload, dict):
+            function_name = str(
+                function_payload.get("name") or tool_call.get("name") or "unknown_tool"
+            )
+            function_args = function_payload.get("arguments", tool_call.get("arguments", {}))
+        else:
+            function_name = str(tool_call.get("name") or "unknown_tool")
+            function_args = tool_call.get("arguments", {})
+
+        if isinstance(function_args, str):
+            arguments_json = function_args
+        else:
+            try:
+                arguments_json = json.dumps(function_args if function_args is not None else {})
+            except TypeError:
+                arguments_json = json.dumps({"value": str(function_args)})
+
+        return {
+            "id": tool_call_id,
+            "type": "function",
+            "function": {
+                "name": function_name,
+                "arguments": arguments_json,
+            },
+        }
+
+    def _convert_messages(self, messages: list[LLMMessage]) -> list[dict[str, Any]]:
+        """Convert runtime LLM messages to OpenAI chat message schema."""
+        openai_messages: list[dict[str, Any]] = []
+
+        for msg_idx, msg in enumerate(messages):
+            role = msg.role
+
+            if role == "assistant":
+                assistant_message: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": msg.content if msg.content is not None else "",
+                }
+
+                if msg.tool_calls:
+                    normalized_tool_calls = []
+                    for tool_idx, tool_call in enumerate(msg.tool_calls):
+                        if not isinstance(tool_call, dict):
+                            logger.warning(
+                                "Skipping non-dict tool_call at message %s index %s: %r",
+                                msg_idx,
+                                tool_idx,
+                                tool_call,
+                            )
+                            continue
+                        normalized_tool_calls.append(
+                            self._serialize_tool_call(
+                                tool_call, fallback_id=f"call_{msg_idx}_{tool_idx}"
+                            )
+                        )
+                    if normalized_tool_calls:
+                        assistant_message["tool_calls"] = normalized_tool_calls
+                        # OpenAI allows `content=None` when tool calls are present.
+                        if assistant_message["content"] == "":
+                            assistant_message["content"] = None
+
+                openai_messages.append(assistant_message)
+                continue
+
+            if role == "tool":
+                if not msg.tool_call_id:
+                    logger.warning(
+                        "Skipping tool message without tool_call_id at index %s to avoid OpenAI 400",
+                        msg_idx,
+                    )
+                    continue
+
+                tool_message: dict[str, Any] = {
+                    "role": "tool",
+                    "tool_call_id": msg.tool_call_id,
+                    "content": msg.content if msg.content is not None else "",
+                }
+                if msg.name:
+                    tool_message["name"] = msg.name
+                openai_messages.append(tool_message)
+                continue
+
+            # user/system/developer or other roles pass through with safe string content
+            openai_messages.append(
+                {
+                    "role": role,
+                    "content": msg.content if msg.content is not None else "",
+                }
+            )
+
+        return openai_messages
 
     async def stream(
         self,
@@ -92,9 +187,7 @@ class OpenAIProvider(LLMProvider):
         client = self.get_client()
 
         # Convert messages to OpenAI format
-        openai_messages = []
-        for msg in messages:
-            openai_messages.append({"role": msg.role, "content": msg.content})
+        openai_messages = self._convert_messages(messages)
 
         try:
             # Build request parameters
@@ -152,8 +245,6 @@ class OpenAIProvider(LLMProvider):
                 if choice.finish_reason:
                     # Emit tool calls if any
                     if tool_calls_buffer:
-                        import json
-
                         tool_calls = []
                         for tc in tool_calls_buffer.values():
                             try:
