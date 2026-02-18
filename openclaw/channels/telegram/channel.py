@@ -869,16 +869,24 @@ class TelegramChannel(ChannelPlugin):
 
     async def _handle_model_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /model command - show model selection"""
-        current_model = self._config.get("model", "google/gemini-3-pro-preview") if self._config else "unknown"
-        
-        keyboard = [
-            [InlineKeyboardButton("🌟 Gemini Pro (Current)", callback_data="model_gemini")],
-            [InlineKeyboardButton("🧠 Claude Sonnet", callback_data="model_claude")],
-            [InlineKeyboardButton("⚡ GPT-4", callback_data="model_gpt4")],
-            [InlineKeyboardButton("🔥 GPT-4 Turbo", callback_data="model_gpt4turbo")],
+        current_model = self._config.get("model", "google/gemini-3-flash-preview") if self._config else "unknown"
+
+        model_options = [
+            ("gemini_flash", "🌟 Gemini 3 Flash", "google/gemini-3-flash-preview"),
+            ("gemini_pro", "🧠 Gemini 3 Pro", "google/gemini-3-pro-preview"),
+            ("glm5", "⚡ GLM-5", "openai/zai-org/glm-5-maas"),
+            ("gpt4o", "🔥 GPT-4o", "openai/gpt-4o"),
         ]
+
+        keyboard = []
+        for option_key, label, model_id in model_options:
+            suffix = " ✅" if current_model == model_id else ""
+            keyboard.append(
+                [InlineKeyboardButton(f"{label}{suffix}", callback_data=f"model_{option_key}")]
+            )
+
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         await update.message.reply_text(
             f"🤖 *Select AI Model*\n\n"
             f"Current Model: `{current_model}`\n\n"
@@ -927,18 +935,18 @@ class TelegramChannel(ChannelPlugin):
         elif data.startswith("model_"):
             model_name = data.replace("model_", "")
             model_map = {
-                "gemini": ("google/gemini-3-pro-preview", "Gemini Pro"),
-                "claude": ("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet"),
-                "gpt4": ("gpt-4", "GPT-4"),
-                "gpt4turbo": ("gpt-4-turbo", "GPT-4 Turbo"),
+                "gemini_flash": ("google/gemini-3-flash-preview", "Gemini 3 Flash"),
+                "gemini_pro": ("google/gemini-3-pro-preview", "Gemini 3 Pro"),
+                "glm5": ("openai/zai-org/glm-5-maas", "GLM-5"),
+                "gpt4o": ("openai/gpt-4o", "GPT-4o"),
             }
-            
+
             if model_name in model_map:
                 model_id, display_name = model_map[model_name]
                 # Update config (this would need to be persisted)
                 if self._config:
                     self._config["model"] = model_id
-                
+
                 try:
                     await query.edit_message_text(
                         f"✅ *Model Switched*\n\n"

@@ -9,7 +9,7 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from .api_keys import get_api_key_manager
+from .api_keys import get_api_key_manager, validate_api_key_value
 from .rate_limiter import get_global_limiter
 
 logger = logging.getLogger(__name__)
@@ -49,20 +49,34 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.url.path in self.skip_auth_paths:
             return await call_next(request)
 
-        # Check API key
+        # Check API key (X-API-Key or Authorization: Bearer)
         api_key = request.headers.get("x-api-key")
-        if api_key:
-            validated_key = self.api_key_manager.validate_key(api_key)
-            if validated_key:
-                # Attach to request state
-                request.state.api_key = validated_key
-            else:
-                logger.warning(f"Invalid API key from {request.client.host}")
-                return Response(
-                    content='{"detail": "Invalid or expired API key"}',
-                    status_code=401,
-                    media_type="application/json",
-                )
+        if not api_key:
+            auth_header = request.headers.get("authorization", "").strip()
+            if auth_header.lower().startswith("bearer "):
+                bearer_key = auth_header.split(" ", 1)[1].strip()
+                if bearer_key:
+                    api_key = bearer_key
+
+        if not api_key:
+            logger.warning(f"Missing API key from {request.client.host}")
+            return Response(
+                content='{"detail": "API key required. Provide X-API-Key or Authorization: Bearer <key>."}',
+                status_code=401,
+                media_type="application/json",
+            )
+
+        validated_key = validate_api_key_value(api_key)
+        if validated_key:
+            # Attach to request state
+            request.state.api_key = validated_key
+        else:
+            logger.warning(f"Invalid API key from {request.client.host}")
+            return Response(
+                content='{"detail": "Invalid or expired API key"}',
+                status_code=401,
+                media_type="application/json",
+            )
 
         # Rate limiting
         if self.enable_rate_limiting:

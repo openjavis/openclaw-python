@@ -5,6 +5,7 @@ from __future__ import annotations
 
 
 import hashlib
+import os
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -13,6 +14,33 @@ from fastapi import Header, HTTPException, status
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+def _get_static_api_key() -> str | None:
+    """Get static API key from environment (preferred for production)."""
+    return os.getenv("CLAWDBOT_API__API_KEY") or os.getenv("OPENCLAW_API_KEY")
+
+
+def validate_api_key_value(raw_key: str | None) -> APIKey | None:
+    """Validate API key against static configured key or dynamic key manager."""
+    if not raw_key:
+        return None
+
+    static_key = _get_static_api_key()
+    if static_key:
+        if secrets.compare_digest(raw_key, static_key):
+            return APIKey(
+                key_id="static",
+                key_hash="static",
+                name="configured-static-key",
+                permissions={"read", "write", "admin"},
+                rate_limit=None,
+                enabled=True,
+            )
+        return None
+
+    manager = get_api_key_manager()
+    return manager.validate_key(raw_key)
 
 
 class APIKey(BaseModel):
@@ -214,39 +242,54 @@ def get_api_key_manager() -> APIKeyManager:
     if _api_key_manager is None:
         _api_key_manager = APIKeyManager()
 
-        # Create default API key if none exist
-        if len(_api_key_manager.list_keys()) == 0:
+        auto_create = os.getenv("OPENCLAW_AUTO_CREATE_DEFAULT_API_KEY", "0").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+        if auto_create and len(_api_key_manager.list_keys()) == 0:
             default_key = _api_key_manager.create_key(
                 name="default", permissions={"read", "write", "admin"}
             )
             logger.info(f"Created default API key: {default_key}")
             logger.warning(
                 "⚠️  Default API key created. "
-                "In production, create proper keys and delete this one."
+                "Disable with OPENCLAW_AUTO_CREATE_DEFAULT_API_KEY=0 in production."
             )
 
     return _api_key_manager
 
 
 # FastAPI dependency
-async def verify_api_key(x_api_key: str | None = Header(None)) -> APIKey:
+async def verify_api_key(
+    x_api_key: str | None = Header(None), authorization: str | None = Header(None)
+) -> APIKey:
     """
-    Verify API key from header
+    Verify API key from headers
 
-    Use as FastAPI dependency:
-        @app.get("/protected")
-        async def endpoint(api_key: APIKey = Depends(verify_api_key)):
-            ...
+    Accepts either:
+    - X-API-Key: <key>
+    - Authorization: Bearer <key>
     """
-    if not x_api_key:
+    provided_key = x_api_key
+
+    if not provided_key and authorization:
+        auth_value = authorization.strip()
+        if auth_value.lower().startswith("bearer "):
+            bearer_key = auth_value.split(" ", 1)[1].strip()
+            if bearer_key:
+                provided_key = bearer_key
+
+    if not provided_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key required. Provide X-API-Key header.",
+            detail="API key required. Provide X-API-Key or Authorization: Bearer <key>.",
             headers={"WWW-Authenticate": "ApiKey"},
         )
 
-    manager = get_api_key_manager()
-    api_key = manager.validate_key(x_api_key)
+    api_key = validate_api_key_value(provided_key)
 
     if not api_key:
         raise HTTPException(

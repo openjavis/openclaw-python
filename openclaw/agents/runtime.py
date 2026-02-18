@@ -1021,14 +1021,15 @@ class MultiProviderRuntime:
                                         # Async notify (non-blocking)
                                         asyncio.create_task(self._notify_observers(update_event))
                                     
-                                    # Check if tool supports new interface (has execute with 4 params)
-                                    # Try new interface first
+                                    # Detect tool execution interface using parameter names.
+                                    # Bound methods do not expose `self`, so required-count checks are brittle.
                                     try:
                                         from inspect import signature
+
                                         sig = signature(tool.execute)
-                                        param_count = len([p for p in sig.parameters.values() if p.default == p.empty])
-                                        
-                                        if param_count >= 3:  # new interface: tool_call_id, params, signal, on_update
+                                        param_names = set(sig.parameters.keys())
+
+                                        if {"tool_call_id", "params"}.issubset(param_names):
                                             result = await tool.execute(
                                                 tool_call_id=tc["id"],
                                                 params=tc["arguments"],
@@ -1036,7 +1037,7 @@ class MultiProviderRuntime:
                                                 on_update=handle_tool_update,
                                             )
                                         else:
-                                            # Legacy interface
+                                            # Legacy interface: execute(params)
                                             result = await tool.execute(tc["arguments"])
                                     except Exception:
                                         # Fallback to legacy interface
@@ -1374,12 +1375,41 @@ class MultiProviderRuntime:
                         elif response.type == "done":
                             # Got final text response
                             final_response_text = accumulated_text or ""  # Ensure never None
-                            
+
+                            # If model returns empty text after tool execution, fall back
+                            # to latest tool output so callers don't fail with empty response.
+                            if not final_response_text:
+                                fallback_candidates = [
+                                    str(tr.get("content", "")).strip()
+                                    for tr in tool_results_to_add
+                                    if isinstance(tr, dict) and str(tr.get("content", "")).strip()
+                                ]
+                                if fallback_candidates:
+                                    final_response_text = fallback_candidates[-1]
+                                    logger.warning(
+                                        "Model returned empty follow-up text; using latest tool output as fallback"
+                                    )
+                                    fallback_event = Event(
+                                        type=EventType.AGENT_TEXT,
+                                        source="agent-runtime",
+                                        session_id=session.session_id if session else None,
+                                        data={
+                                            "delta": {
+                                                "type": "text_delta",
+                                                "text": final_response_text,
+                                            }
+                                        },
+                                    )
+                                    await self._notify_observers(fallback_event)
+                                    yield fallback_event
+
                             # Add assistant message
                             if final_response_text:
                                 session.add_assistant_message(content=final_response_text)
                                 logger.info(f"✅ Added assistant message (follow-up done): text={len(final_response_text)} chars")
-                            
+                            else:
+                                logger.warning("Follow-up completed with no text and no tool fallback")
+
                             break
                             
                         elif response.type == "error":

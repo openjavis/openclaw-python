@@ -59,20 +59,53 @@ class GeminiProvider(LLMProvider):
         return "gemini"
 
     def get_client(self) -> Any:
-        """Initialize Gemini client using new API"""
+        """Initialize Gemini client using Vertex AI OAuth or API key mode."""
         if self._client is None:
-            api_key = self.api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-            if not api_key:
-                raise ValueError("GOOGLE_API_KEY or GEMINI_API_KEY not provided")
-
             if not GENAI_AVAILABLE or genai is None:
                 raise ImportError(
                     "google-genai package not installed. Install with: pip install google-genai"
                 )
 
-            # Use new google.genai Client
-            self._client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
-            logger.info(f"Initialized Gemini client with model: {self.model}")
+            use_vertex = os.getenv("GEMINI_USE_VERTEXAI", "0").lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+
+            if use_vertex:
+                import google.auth
+                from google.auth.transport.requests import Request
+
+                creds, project = google.auth.default(
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                )
+                creds.refresh(Request())
+
+                project_id = project or os.getenv("GOOGLE_CLOUD_PROJECT")
+                if not project_id:
+                    raise ValueError("Could not determine GCP project for Vertex Gemini")
+
+                location = os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("VERTEX_LOCATION") or "global"
+                api_version = os.getenv("GEMINI_API_VERSION", "v1")
+
+                self._client = genai.Client(
+                    vertexai=True,
+                    project=project_id,
+                    location=location,
+                    credentials=creds,
+                    http_options={"api_version": api_version},
+                )
+                logger.info(
+                    f"Initialized Gemini client via Vertex AI: project={project_id}, location={location}, model={self.model}"
+                )
+            else:
+                api_key = self.api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+                if not api_key:
+                    raise ValueError("GOOGLE_API_KEY or GEMINI_API_KEY not provided")
+
+                self._client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
+                logger.info(f"Initialized Gemini client with API key mode: model={self.model}")
 
         return self._client
 

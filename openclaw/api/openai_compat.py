@@ -18,6 +18,8 @@ from pydantic import BaseModel
 
 from ..agents.runtime import AgentRuntime
 from ..agents.session import SessionManager
+from ..agents.tools import create_coding_tools
+from ..config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +130,7 @@ AVAILABLE_MODELS = [
 # Global instances (set by main API server)
 _runtime: AgentRuntime | None = None
 _session_manager: SessionManager | None = None
+_runtime_tools: list = []
 
 
 def set_runtime(runtime: AgentRuntime) -> None:
@@ -161,6 +164,23 @@ def _map_model_name(model: str) -> str:
 
     # For unknown short names, let runtime apply its own default provider rules.
     return model_mapping.get(model, model)
+
+
+def _get_runtime_tools() -> list:
+    """Get cached runtime coding tools for OpenAI-compatible endpoint."""
+    global _runtime_tools
+    if _runtime_tools:
+        return _runtime_tools
+
+    try:
+        settings = get_settings()
+        _runtime_tools = create_coding_tools(str(settings.workspace_dir))
+        logger.info(f"OpenAI-compat loaded {len(_runtime_tools)} runtime tools")
+    except Exception as e:
+        logger.error(f"OpenAI-compat failed to initialize tools: {e}", exc_info=True)
+        _runtime_tools = []
+
+    return _runtime_tools
 
 
 def _extract_text_from_event(event) -> str:
@@ -248,6 +268,8 @@ async def chat_completions(
     if request.stream:
         # Streaming response
         async def stream_response() -> AsyncIterator[str]:
+            streamed_any_text = False
+            tool_result_fallback = ""
             try:
                 # Send initial chunk with role
                 initial_chunk = ChatCompletionChunk(
@@ -266,6 +288,7 @@ async def chat_completions(
                 async for event in runtime.run_turn(
                     session,
                     "",  # Empty message since we already added messages
+                    tools=_get_runtime_tools(),
                     max_tokens=request.max_tokens or 4096,
                 ):
                     event_type = str(getattr(event, "type", "")).lower()
@@ -275,8 +298,18 @@ async def chat_completions(
                             detail = event.data.get("message") or event.data.get("error") or ""
                         raise RuntimeError(detail or "Model execution failed")
 
+                    if isinstance(getattr(event, "data", None), dict):
+                        maybe_tool_result = event.data.get("result")
+                        if (
+                            isinstance(maybe_tool_result, str)
+                            and maybe_tool_result.strip()
+                            and ("tool_result" in event_type or "tool_execution_end" in event_type)
+                        ):
+                            tool_result_fallback = maybe_tool_result.strip()
+
                     text_delta = _extract_text_from_event(event)
                     if text_delta:
+                        streamed_any_text = True
                         chunk = ChatCompletionChunk(
                             id=completion_id,
                             created=created,
@@ -289,6 +322,22 @@ async def chat_completions(
                             ],
                         )
                         yield f"data: {chunk.model_dump_json()}\n\n"
+
+                if not streamed_any_text and tool_result_fallback:
+                    fallback_chunk = ChatCompletionChunk(
+                        id=completion_id,
+                        created=created,
+                        model=request.model,
+                        choices=[
+                            ChatCompletionChunkChoice(
+                                index=0,
+                                delta=ChatCompletionChunkDelta(content=tool_result_fallback),
+                            )
+                        ],
+                    )
+                    yield f"data: {fallback_chunk.model_dump_json()}\n\n"
+                    streamed_any_text = True
+                    logger.info("OpenAI-compat stream used tool result fallback for empty model text")
 
                 # Send final chunk
                 final_chunk = ChatCompletionChunk(
@@ -316,16 +365,27 @@ async def chat_completions(
         try:
             response_text = ""
             error_seen = False
+            tool_result_fallback = ""
 
             async for event in runtime.run_turn(
                 session,
                 "",  # Empty message since we already added messages
+                tools=_get_runtime_tools(),
                 max_tokens=request.max_tokens or 4096,
             ):
                 event_type = str(getattr(event, "type", "")).lower()
                 if "error" in event_type:
                     error_seen = True
                     continue
+
+                if isinstance(getattr(event, "data", None), dict):
+                    maybe_tool_result = event.data.get("result")
+                    if (
+                        isinstance(maybe_tool_result, str)
+                        and maybe_tool_result.strip()
+                        and ("tool_result" in event_type or "tool_execution_end" in event_type)
+                    ):
+                        tool_result_fallback = maybe_tool_result.strip()
 
                 text_delta = _extract_text_from_event(event)
                 if text_delta:
@@ -334,12 +394,16 @@ async def chat_completions(
             if not response_text:
                 if error_seen:
                     raise HTTPException(status_code=502, detail="Model execution failed")
-                if request.max_tokens is not None and request.max_tokens < 128:
+                if tool_result_fallback:
+                    response_text = tool_result_fallback
+                    logger.info("OpenAI-compat used tool result fallback for empty model text")
+                elif request.max_tokens is not None and request.max_tokens < 128:
                     raise HTTPException(
                         status_code=422,
                         detail="Model returned no final content. Increase max_tokens (e.g., 256+).",
                     )
-                raise HTTPException(status_code=502, detail="Model returned empty response")
+                else:
+                    raise HTTPException(status_code=502, detail="Model returned empty response")
 
             # Estimate tokens (rough approximation)
             prompt_tokens = sum(len(m.content) // 4 for m in request.messages)

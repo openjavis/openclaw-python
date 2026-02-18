@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from ..agents.runtime import AgentRuntime
 from ..agents.session import SessionManager
+from ..agents.tools import create_coding_tools
 from ..channels.base import InboundMessage
 from ..channels.registry import ChannelRegistry
 from ..config.settings import get_settings
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 _runtime: AgentRuntime | None = None
 _session_manager: SessionManager | None = None
 _channel_registry: ChannelRegistry | None = None
+_runtime_tools: list[Any] = []
 
 
 def set_runtime(runtime: AgentRuntime) -> None:
@@ -136,6 +138,16 @@ async def lifespan(app: FastAPI):
 
         # Start registered channels
         settings = get_settings()
+
+        # Build coding tools once for runtime usage (bash/read/edit/write).
+        global _runtime_tools
+        if not _runtime_tools:
+            try:
+                _runtime_tools = create_coding_tools(str(settings.workspace_dir))
+                logger.info(f"Loaded {len(_runtime_tools)} runtime tools")
+            except Exception as e:
+                logger.error(f"Failed to initialize runtime tools: {e}", exc_info=True)
+                _runtime_tools = []
         for channel in _channel_registry.get_all():
             try:
                 # Prepare config for channel
@@ -206,13 +218,14 @@ async def _handle_inbound_message(message: InboundMessage) -> None:
         # Run agent
         response_text = ""
         error_seen = False
+        tool_result_fallback = ""
 
         # Indicate typing if supported
         channel = _channel_registry.get(message.channel_id) if _channel_registry else None
         if channel and hasattr(channel, "indicate_typing"):
             await channel.indicate_typing(message.chat_id)
 
-        async for event in _runtime.run_turn(session, text):
+        async for event in _runtime.run_turn(session, text, tools=_runtime_tools):
             event_type_str = str(event.type).lower()
 
             if "error" in event_type_str:
@@ -221,6 +234,14 @@ async def _handle_inbound_message(message: InboundMessage) -> None:
 
             if not isinstance(event.data, dict):
                 continue
+
+            maybe_tool_result = event.data.get("result")
+            if (
+                isinstance(maybe_tool_result, str)
+                and maybe_tool_result.strip()
+                and ("tool_result" in event_type_str or "tool_execution_end" in event_type_str)
+            ):
+                tool_result_fallback = maybe_tool_result.strip()
 
             delta = event.data.get("delta")
             if isinstance(delta, dict) and isinstance(delta.get("text"), str):
@@ -231,6 +252,10 @@ async def _handle_inbound_message(message: InboundMessage) -> None:
                 response_text += event.data["text"]
             elif isinstance(event.data.get("content"), str):
                 response_text += event.data["content"]
+
+        if not response_text and tool_result_fallback and not error_seen:
+            response_text = tool_result_fallback
+            logger.info("Using tool result fallback for empty channel response")
 
         logger.info(f"DEBUG: Final response length: {len(response_text)}")
 
@@ -373,8 +398,9 @@ def create_app() -> FastAPI:
             # Execute agent turn
             response_text = ""
             error_seen = False
+            tool_result_fallback = ""
             async for event in runtime.run_turn(
-                session, request.message, max_tokens=request.max_tokens
+                session, request.message, tools=_runtime_tools, max_tokens=request.max_tokens
             ):
                 event_type_str = str(event.type).lower()
 
@@ -384,6 +410,14 @@ def create_app() -> FastAPI:
 
                 if not isinstance(event.data, dict):
                     continue
+
+                maybe_tool_result = event.data.get("result")
+                if (
+                    isinstance(maybe_tool_result, str)
+                    and maybe_tool_result.strip()
+                    and ("tool_result" in event_type_str or "tool_execution_end" in event_type_str)
+                ):
+                    tool_result_fallback = maybe_tool_result.strip()
 
                 delta = event.data.get("delta")
                 if isinstance(delta, dict) and isinstance(delta.get("text"), str):
@@ -401,12 +435,16 @@ def create_app() -> FastAPI:
                         status_code=502,
                         detail="Model execution failed; no response generated.",
                     )
-                if request.max_tokens is not None and request.max_tokens < 128:
+                if tool_result_fallback:
+                    response_text = tool_result_fallback
+                    logger.info("Using tool result fallback for empty /agent/chat response")
+                elif request.max_tokens is not None and request.max_tokens < 128:
                     raise HTTPException(
                         status_code=422,
                         detail="Model returned no final content. Increase max_tokens (e.g., 256+).",
                     )
-                raise HTTPException(status_code=502, detail="Model returned empty response.")
+                else:
+                    raise HTTPException(status_code=502, detail="Model returned empty response.")
 
             return AgentResponse(
                 session_id=request.session_id,
