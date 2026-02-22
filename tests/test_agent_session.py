@@ -1,270 +1,254 @@
-"""Tests for AgentSession"""
+"""Tests for the pi_coding_agent-backed AgentSession adapter."""
+from __future__ import annotations
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from openclaw.agents.agent_session import AgentSession
-from openclaw.agents.session import Session
+from openclaw.agents.agent_session import AgentSession, HookRegistry
 from openclaw.events import Event, EventType
 
 
-@pytest.fixture
-def mock_session():
-    """Create a mock session"""
-    session = Mock(spec=Session)
-    session.session_id = "test-session-456"
-    session.get_messages = Mock(return_value=[])
-    session.add_user_message = Mock()
-    session.add_assistant_message = Mock()
-    session.clear_messages = Mock()
-    return session
-
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 @pytest.fixture
-def mock_runtime():
-    """Create a mock runtime"""
-    runtime = Mock()
-    runtime.provider_name = "test-provider"
-    runtime._stream_single_turn = AsyncMock()
-    return runtime
+def mock_pi_session():
+    """Mock pi_coding_agent.AgentSession."""
+    pi = MagicMock()
+    pi.session_id = "test-session-456"
+    pi.prompt = AsyncMock()
+    pi.abort = AsyncMock()
+    pi._all_tools = []
+    pi._agent = MagicMock()
+    pi.subscribe = MagicMock(return_value=lambda: None)
+    return pi
 
 
-@pytest.fixture
-def mock_tools():
-    """Create mock tools"""
+# ---------------------------------------------------------------------------
+# Initialization
+# ---------------------------------------------------------------------------
+
+def test_agent_session_initialization():
+    """Test AgentSession construction with minimal args."""
+    session = AgentSession(
+        session_key="agent:main:default",
+        cwd="/workspace",
+        model="google/gemini-2.0-flash",
+        system_prompt="You are openclaw.",
+    )
+    assert session.session_key == "agent:main:default"
+    assert session.cwd == "/workspace"
+    assert session._model_str == "google/gemini-2.0-flash"
+    assert session._system_prompt == "You are openclaw."
+    assert session._subscribers == []
+    assert session.is_streaming is False
+    assert session._pi_session is None
+
+
+def test_agent_session_legacy_params_accepted():
+    """Legacy params session= runtime= tools= should not raise."""
+    old_session = Mock()
+    old_session.session_id = "legacy-session-id"
+    old_runtime = Mock()
     tool = Mock()
     tool.name = "test_tool"
-    tool.execute = AsyncMock(return_value="test result")
-    return [tool]
 
-
-def test_agent_session_initialization(mock_session, mock_runtime, mock_tools):
-    """Test AgentSession initialization"""
     agent_session = AgentSession(
-        session=mock_session,
-        runtime=mock_runtime,
-        tools=mock_tools,
+        session=old_session,
+        runtime=old_runtime,
+        tools=[tool],
         system_prompt="Test prompt",
         max_iterations=10,
         max_tokens=2048,
     )
-    
-    assert agent_session.session == mock_session
-    assert agent_session.runtime == mock_runtime
-    assert agent_session.tools == mock_tools
-    assert agent_session.system_prompt == "Test prompt"
-    assert agent_session.max_tokens == 2048
-    assert agent_session._orchestrator is not None
-    assert agent_session._subscribers == []
-    assert agent_session.is_streaming == False
+    assert agent_session._extra_tools == [tool]
+    assert agent_session._external_session_id == "legacy-session-id"
+    assert agent_session._system_prompt == "Test prompt"
+    assert agent_session.is_streaming is False
 
 
-def test_agent_session_properties(mock_session, mock_runtime, mock_tools):
-    """Test AgentSession properties"""
-    agent_session = AgentSession(
-        session=mock_session,
-        runtime=mock_runtime,
-        tools=mock_tools,
-    )
-    
-    assert agent_session.session_id == "test-session-456"
-    assert agent_session.is_streaming == False
-    
-    mock_session.get_messages.return_value = [Mock(), Mock(), Mock()]
-    assert agent_session.get_message_count() == 3
+# ---------------------------------------------------------------------------
+# Properties
+# ---------------------------------------------------------------------------
+
+def test_session_id_before_pi_session():
+    """session_id returns external ID before pi session is created."""
+    s = AgentSession(session_id="my-ext-id")
+    assert s.session_id == "my-ext-id"
 
 
-def test_agent_session_subscribe(mock_session, mock_runtime, mock_tools):
-    """Test event subscription"""
-    agent_session = AgentSession(
-        session=mock_session,
-        runtime=mock_runtime,
-        tools=mock_tools,
-    )
-    
+def test_session_id_after_pi_session(mock_pi_session):
+    """session_id delegates to pi session once created."""
+    s = AgentSession(session_id="ext-id")
+    s._pi_session = mock_pi_session
+    assert s.session_id == "test-session-456"
+
+
+def test_is_streaming_default():
+    s = AgentSession()
+    assert s.is_streaming is False
+
+
+# ---------------------------------------------------------------------------
+# Subscribe / unsubscribe
+# ---------------------------------------------------------------------------
+
+def test_subscribe_returns_unsubscribe():
+    session = AgentSession()
     handler_called = []
-    
-    def event_handler(event):
-        handler_called.append(event)
-    
-    # Subscribe
-    unsubscribe = agent_session.subscribe(event_handler)
-    assert len(agent_session._subscribers) == 1
-    
-    # Unsubscribe
-    unsubscribe()
-    assert len(agent_session._subscribers) == 0
 
-
-@pytest.mark.asyncio
-async def test_agent_session_prompt(mock_session, mock_runtime, mock_tools):
-    """Test prompt() method"""
-    agent_session = AgentSession(
-        session=mock_session,
-        runtime=mock_runtime,
-        tools=mock_tools,
-    )
-    
-    # Mock orchestrator to avoid actual execution
-    with patch.object(agent_session._orchestrator, 'execute_with_tools') as mock_execute:
-        async def mock_events(*args, **kwargs):
-            yield Event(
-                type=EventType.AGENT_TEXT,
-                source="test",
-                session_id="test-session-456",
-                data={"delta": {"text": "Test"}}
-            )
-        
-        mock_execute.return_value = mock_events()
-        
-        # Call prompt
-        await agent_session.prompt("Test prompt")
-        
-        # Should have called orchestrator
-        mock_execute.assert_called_once()
-        
-        # Check arguments
-        call_args = mock_execute.call_args
-        assert call_args.kwargs['session'] == mock_session
-        assert call_args.kwargs['prompt'] == "Test prompt"
-        assert call_args.kwargs['tools'] == mock_tools
-        assert call_args.kwargs['runtime'] == mock_runtime
-
-
-@pytest.mark.asyncio
-async def test_agent_session_prompt_with_images(mock_session, mock_runtime, mock_tools):
-    """Test prompt() with images"""
-    agent_session = AgentSession(
-        session=mock_session,
-        runtime=mock_runtime,
-        tools=mock_tools,
-    )
-    
-    with patch.object(agent_session._orchestrator, 'execute_with_tools') as mock_execute:
-        async def mock_events(*args, **kwargs):
-            yield Event(
-                type=EventType.AGENT_TEXT,
-                source="test",
-                session_id="test-session-456",
-                data={"delta": {"text": "Test"}}
-            )
-        
-        mock_execute.return_value = mock_events()
-        
-        # Call prompt with images
-        images = ["image1.jpg", "image2.jpg"]
-        await agent_session.prompt("Describe images", images=images)
-        
-        # Check images were passed
-        call_args = mock_execute.call_args
-        assert call_args.kwargs['images'] == images
-
-
-@pytest.mark.asyncio
-async def test_agent_session_streaming_state(mock_session, mock_runtime, mock_tools):
-    """Test is_streaming state during prompt execution"""
-    agent_session = AgentSession(
-        session=mock_session,
-        runtime=mock_runtime,
-        tools=mock_tools,
-    )
-    
-    # Initially not streaming
-    assert agent_session.is_streaming == False
-    
-    streaming_states = []
-    
-    async def check_streaming():
-        await asyncio.sleep(0.01)
-        streaming_states.append(agent_session.is_streaming)
-    
-    with patch.object(agent_session._orchestrator, 'execute_with_tools') as mock_execute:
-        async def mock_events(*args, **kwargs):
-            # Record streaming state during execution
-            streaming_states.append(agent_session.is_streaming)
-            yield Event(
-                type=EventType.AGENT_TEXT,
-                source="test",
-                session_id="test-session-456",
-                data={"delta": {"text": "Test"}}
-            )
-        
-        mock_execute.return_value = mock_events()
-        
-        # Start prompt execution
-        await agent_session.prompt("Test")
-    
-    # Should have been streaming during execution
-    assert True in streaming_states
-    
-    # Should not be streaming after completion
-    assert agent_session.is_streaming == False
-
-
-@pytest.mark.asyncio
-async def test_agent_session_event_forwarding(mock_session, mock_runtime, mock_tools):
-    """Test that events are forwarded to subscribers"""
-    agent_session = AgentSession(
-        session=mock_session,
-        runtime=mock_runtime,
-        tools=mock_tools,
-    )
-    
-    received_events = []
-    
     def handler(event):
-        received_events.append(event)
-    
-    agent_session.subscribe(handler)
-    
-    with patch.object(agent_session._orchestrator, 'execute_with_tools') as mock_execute:
-        async def mock_events(*args, **kwargs):
-            yield Event(
-                type=EventType.AGENT_TEXT,
-                source="test",
-                session_id="test-session-456",
-                data={"delta": {"text": "Event 1"}}
-            )
-            yield Event(
-                type=EventType.AGENT_TEXT,
-                source="test",
-                session_id="test-session-456",
-                data={"delta": {"text": "Event 2"}}
-            )
-        
-        mock_execute.return_value = mock_events()
-        
-        await agent_session.prompt("Test")
-    
-    # Should have received all events
-    assert len(received_events) == 2
+        handler_called.append(event)
+
+    unsub = session.subscribe(handler)
+    assert len(session._subscribers) == 1
+
+    unsub()
+    assert len(session._subscribers) == 0
 
 
-def test_agent_session_reset(mock_session, mock_runtime, mock_tools):
-    """Test session reset"""
-    agent_session = AgentSession(
-        session=mock_session,
-        runtime=mock_runtime,
-        tools=mock_tools,
-    )
-    
-    agent_session.reset()
-    
-    # Should have cleared messages
-    mock_session.clear_messages.assert_called_once()
+def test_subscribe_multiple_handlers():
+    session = AgentSession()
+    h1 = Mock()
+    h2 = Mock()
+    u1 = session.subscribe(h1)
+    u2 = session.subscribe(h2)
+    assert len(session._subscribers) == 2
+    u1()
+    assert len(session._subscribers) == 1
+    u2()
+    assert len(session._subscribers) == 0
 
 
-def test_agent_session_repr(mock_session, mock_runtime, mock_tools):
-    """Test __repr__"""
-    agent_session = AgentSession(
-        session=mock_session,
-        runtime=mock_runtime,
-        tools=mock_tools,
-    )
-    
-    repr_str = repr(agent_session)
-    assert "AgentSession" in repr_str
-    assert "test-session-456" in repr_str or "test-ses" in repr_str  # Truncated ID
-    assert "tools=1" in repr_str
-    assert "streaming=False" in repr_str
+# ---------------------------------------------------------------------------
+# prompt() — happy path via mock pi session
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_prompt_calls_pi_session(mock_pi_session):
+    """prompt() should call pi_session.prompt() with the text."""
+    s = AgentSession(session_id="test")
+    s._pi_session = mock_pi_session
+    mock_pi_session.subscribe = MagicMock(return_value=lambda: None)
+
+    with patch.object(s, "_get_pi_session", return_value=mock_pi_session):
+        await s.prompt("Hello world")
+
+    mock_pi_session.prompt.assert_awaited_once_with("Hello world")
+
+
+@pytest.mark.asyncio
+async def test_prompt_sets_is_streaming(mock_pi_session):
+    """is_streaming should be True during prompt and False after."""
+    s = AgentSession(session_id="test")
+    streaming_states: list[bool] = []
+
+    async def fake_prompt(text):
+        streaming_states.append(s.is_streaming)
+
+    mock_pi_session.prompt = fake_prompt
+    mock_pi_session.subscribe = MagicMock(return_value=lambda: None)
+
+    with patch.object(s, "_get_pi_session", return_value=mock_pi_session):
+        await s.prompt("Test")
+
+    assert True in streaming_states
+    assert s.is_streaming is False
+
+
+@pytest.mark.asyncio
+async def test_prompt_emits_error_event_on_failure():
+    """prompt() should emit an ERROR event when pi session raises."""
+    s = AgentSession(session_id="test")
+    received: list[Event] = []
+    s.subscribe(received.append)
+
+    bad_pi = MagicMock()
+    bad_pi.session_id = "test"
+    bad_pi.subscribe = MagicMock(return_value=lambda: None)
+    bad_pi.prompt = AsyncMock(side_effect=RuntimeError("boom"))
+
+    with patch.object(s, "_get_pi_session", return_value=bad_pi):
+        await s.prompt("Fail")
+
+    assert len(received) == 1
+    assert received[0].type == EventType.ERROR
+    assert "boom" in received[0].data["message"]
+
+
+# ---------------------------------------------------------------------------
+# abort() and reset()
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_abort_delegates_to_pi_session(mock_pi_session):
+    s = AgentSession(session_id="test")
+    s._pi_session = mock_pi_session
+    await s.abort()
+    mock_pi_session.abort.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_abort_no_op_when_no_pi_session():
+    """abort() should not raise when pi session hasn't been created."""
+    s = AgentSession(session_id="test")
+    await s.abort()  # Should not raise
+
+
+def test_reset_clears_pi_session(mock_pi_session):
+    s = AgentSession(session_id="test")
+    s._pi_session = mock_pi_session
+    s.reset()
+    assert s._pi_session is None
+
+
+# ---------------------------------------------------------------------------
+# HookRegistry
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_hook_registry_runs_hooks():
+    reg = HookRegistry()
+    log: list[str] = []
+
+    def sync_hook(ctx: dict) -> dict:
+        log.append("sync")
+        return {"extra": 1}
+
+    async def async_hook(ctx: dict) -> dict:
+        log.append("async")
+        return {"extra2": 2}
+
+    reg.register("my_hook", sync_hook)
+    reg.register("my_hook", async_hook)
+
+    result = await reg.run("my_hook", {"initial": True})
+    assert log == ["sync", "async"]
+    assert result["extra"] == 1
+    assert result["extra2"] == 2
+    assert result["initial"] is True
+
+
+@pytest.mark.asyncio
+async def test_hook_registry_unregister():
+    reg = HookRegistry()
+    called = []
+    fn = lambda ctx: called.append(1)
+    reg.register("h", fn)
+    reg.unregister("h", fn)
+    await reg.run("h", {})
+    assert called == []
+
+
+# ---------------------------------------------------------------------------
+# repr
+# ---------------------------------------------------------------------------
+
+def test_agent_session_repr():
+    s = AgentSession(session_key="agent:main:default", session_id="abc123def456")
+    r = repr(s)
+    assert "AgentSession" in r
+    assert "streaming=False" in r

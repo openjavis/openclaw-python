@@ -241,8 +241,11 @@ class AgentLoop:
             # Run main loop
             await self.run_loop()
             
-            # Emit agent end
-            await self.event_emitter.emit(AgentEndEvent(reason="completed"))
+            # Emit agent end with final messages
+            await self.event_emitter.emit(AgentEndEvent(
+                reason="completed",
+                messages=self.state.messages,
+            ))
             
             return self.state.messages
             
@@ -413,7 +416,7 @@ class AgentLoop:
                         "function": {
                             "name": tool.name,
                             "description": tool.description,
-                            "parameters": tool.get_schema()
+                            "parameters": (tool.get_schema() if callable(getattr(tool, "get_schema", None)) else getattr(tool, "parameters", {}))
                         }
                     }
                     for tool in self.tools.values()
@@ -683,6 +686,25 @@ class AgentLoop:
         """
         self.state.followup_queue.append(message)
     
+    async def execute_tool_calls(self, tool_calls: list[dict[str, Any]]) -> list[AgentMessage]:
+        """
+        Execute a list of tool calls and return result messages.
+
+        This is a convenience wrapper around execute_tool_calls_with_steering()
+        that discards steering messages, for use in tests and simple callers.
+
+        Args:
+            tool_calls: List of tool call dicts with keys: id, name, params.
+
+        Returns:
+            List of tool-result AgentMessages appended to state.messages.
+        """
+        results, _ = await self.execute_tool_calls_with_steering(tool_calls)
+        # Also append results to state.messages for state tracking
+        for msg in results:
+            self.state.messages.append(msg)
+        return results
+
     def abort(self, reason: Exception | None = None) -> None:
         """
         Abort agent loop with optional reason

@@ -175,64 +175,42 @@ class GatewayBootstrap:
             logger.warning(f"Plugin loading skipped: {e}")
         results["steps_completed"] += 1
         
-        # Step 8: Create agent runtime and LLM provider
-        logger.info("Step 8: Creating agent runtime")
+        # Step 8: Create agent runtime — uses pi_coding_agent.AgentSession
+        logger.info("Step 8: Creating agent runtime (pi_coding_agent)")
         try:
-            # Get model from config
+            # Resolve model from config
             if self.config.agents and self.config.agents.defaults:
                 model = str(self.config.agents.defaults.model)
             else:
-                model = "google/gemini-3-pro-preview"  # Fallback to Gemini
-            
-            logger.info(f"Creating runtime with model: {model}")
-            
-            # Parse provider and model
-            if "/" in model:
-                provider_name, model_name = model.split("/", 1)
-            else:
-                provider_name = "anthropic"
-                model_name = model
-            
-            # Create appropriate provider
-            from ..agents.providers import (
-                AnthropicProvider,
-                GeminiProvider,
-                OpenAIProvider,
+                model = "google/gemini-2.0-flash"
+
+            logger.info(f"Creating PiAgentRuntime with model: {model}")
+
+            from ..gateway.pi_runtime import PiAgentRuntime
+            self.runtime = PiAgentRuntime(
+                model=model,
+                cwd=workspace_dir,
             )
-            
-            if provider_name == "gemini" or provider_name == "google":
-                self.provider = GeminiProvider(model=model_name)
-            elif provider_name == "openai":
-                self.provider = OpenAIProvider(model=model_name)
-            elif provider_name == "anthropic":
-                self.provider = AnthropicProvider(model=model_name)
-            else:
-                # Default to Gemini
-                self.provider = GeminiProvider(model="gemini-3-pro-preview")
-            
-            # Keep backward compatibility - also create old runtime
-            from ..agents.runtime import MultiProviderRuntime
-            self.runtime = MultiProviderRuntime(model=model)
-            
-            # Initialize Extensions Runtime (openclaw-ts alignment)
+
+            # Also keep a legacy reference for any code that checks type
+            self.provider = self.runtime
+
+            # Extensions (non-critical, best-effort)
             try:
                 from ..extensions.runtime import ExtensionRuntime
                 from ..extensions.memory_extension import create_memory_extension
                 from ..extensions.api import ExtensionAPI
                 from ..extensions.types import ExtensionContext
-                
+
                 extension_runtime = ExtensionRuntime()
-                
-                # Set context
                 extension_context = ExtensionContext(
                     agent_id="main",
-                    session_id=None,  # Will be set per-session
+                    session_id=None,
                     workspace_dir=workspace_dir,
                     logger=logger,
                 )
                 extension_runtime.set_context(extension_context)
-                
-                # Register memory extension if enabled
+
                 memory_enabled = getattr(self.config, "memory_enabled", True)
                 if memory_enabled:
                     memory_config = {
@@ -242,34 +220,25 @@ class GatewayBootstrap:
                         "max_results": getattr(self.config, "memory_max_results", 3),
                     }
                     memory_ext = create_memory_extension(workspace_dir, memory_config)
-                    
-                    # Create extension API with required parameters
                     ext_api = ExtensionAPI(
                         extension_id="memory-extension",
-                        context=extension_context
+                        context=extension_context,
                     )
-                    
-                    # Register extension
                     memory_ext.register(ext_api)
-                    
-                    # Register handlers with runtime
                     extension_runtime.register_handlers(ext_api._handlers)
-                    
                     logger.info(f"Memory extension registered (auto_recall={memory_config['auto_recall']})")
-                
-                # Inject extension runtime into agent runtime
-                self.runtime.extension_runtime = extension_runtime
-                logger.info("Extensions runtime initialized and connected")
-                
+
+                self.runtime.extension_runtime = extension_runtime  # type: ignore[attr-defined]
+                logger.info("Extensions runtime initialized")
             except Exception as ext_err:
                 logger.warning(f"Failed to initialize extensions: {ext_err}")
-            
-            logger.info(f"Created provider: {type(self.provider).__name__}")
+
+            logger.info("PiAgentRuntime created")
         except Exception as e:
             logger.error(f"Runtime creation failed: {e}")
             results["errors"].append(f"runtime: {e}")
         results["steps_completed"] += 1
-        
+
         # Step 9: Create session manager
         logger.info("Step 9: Creating session manager")
         try:
@@ -568,10 +537,99 @@ class GatewayBootstrap:
         except Exception as e:
             logger.error(f"Server start failed: {e}")
             results["errors"].append(f"server_start: {e}")
-        
-        logger.info(f"Bootstrap complete: {results['steps_completed']} steps, {len(results['errors'])} errors")
-        
+
+        # Step 23: Initialize chat run state + dedupe tracker (m3)
+        logger.info("Step 23: Initializing chat run state and deduplication tracker")
+        try:
+            from .chat_state import ChatRunRegistry
+            self.chat_registry = ChatRunRegistry()
+            if self.server:
+                self.server.chat_registry = self.chat_registry
+            logger.info("Chat run registry initialized")
+        except Exception as e:
+            logger.warning(f"Chat run state init failed: {e}")
+        results["steps_completed"] += 1
+
+        # Step 24: Initialize exec approval system (m5)
+        logger.info("Step 24: Initializing exec approval system")
+        try:
+            from ..exec.approval_manager import ExecApprovalManager
+            self.approval_manager = ExecApprovalManager()
+            if self.server:
+                self.server.approval_manager = self.approval_manager
+            logger.info("Exec approval manager initialized")
+        except Exception as e:
+            logger.warning(f"Exec approval init failed: {e}")
+        results["steps_completed"] += 1
+
+        # Step 25: Run BOOT.md runner (m10)
+        logger.info("Step 25: Running BOOT.md runner")
+        try:
+            await self._run_boot_once(workspace_dir)
+        except Exception as e:
+            logger.warning(f"BOOT.md runner failed: {e}")
+        results["steps_completed"] += 1
+
+        # Step 26: Write workspace-state.json (onboarding tracking)
+        logger.info("Step 26: Updating workspace-state.json")
+        try:
+            import time as _time
+            from ..wizard.onboarding import write_workspace_state
+            write_workspace_state(
+                workspace_dir,
+                bootstrap_seeded_at=str(int(_time.time() * 1000)),
+            )
+        except Exception as e:
+            logger.debug(f"workspace-state.json update skipped: {e}")
+        results["steps_completed"] += 1
+
+        logger.info(
+            f"Bootstrap complete: {results['steps_completed']} steps, "
+            f"{len(results['errors'])} errors"
+        )
+
         return results
+
+    async def _run_boot_once(self, workspace_dir: Path) -> None:
+        """Run BOOT.md if it exists and hasn't been run yet.
+
+        Mirrors TypeScript runBootOnce() – executes the bootstrap script
+        once per workspace setup.
+        """
+        boot_md = workspace_dir / "BOOT.md"
+        boot_state = workspace_dir / ".openclaw" / "boot-ran"
+
+        if not boot_md.exists() or boot_state.exists():
+            return
+
+        logger.info(f"Running BOOT.md: {boot_md}")
+        content = boot_md.read_text(encoding="utf-8")
+
+        # Extract shell code blocks and run them
+        import re
+        code_blocks = re.findall(r"```(?:sh|bash|shell)\n(.*?)```", content, re.DOTALL)
+        for block in code_blocks:
+            block = block.strip()
+            if not block:
+                continue
+            try:
+                proc = await asyncio.create_subprocess_shell(
+                    block,
+                    cwd=str(workspace_dir),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+                if proc.returncode != 0:
+                    logger.warning(f"BOOT.md block exited {proc.returncode}: {stderr.decode()[:200]}")
+            except asyncio.TimeoutError:
+                logger.warning("BOOT.md block timed out")
+            except Exception as exc:
+                logger.warning(f"BOOT.md block failed: {exc}")
+
+        # Mark as run
+        boot_state.parent.mkdir(parents=True, exist_ok=True)
+        boot_state.write_text("done")
     
     def _set_env_vars(self) -> None:
         """Set required environment variables"""

@@ -1,20 +1,18 @@
 """Terminal UI for OpenClaw.
 
-Interactive terminal chat interface.
+Interactive terminal chat interface backed by pi_tui and gateway WebSocket.
 """
 from __future__ import annotations
 
-from .tui_app import OpenClawTUI, run_tui
-
-__all__ = ["OpenClawTUI", "run_tui"]
-
-from __future__ import annotations
-
-from .tui import TUI, run_tui
-from .types import TUIOptions
+from .tui import TUI, TUIOptions, run_tui
+from .gateway_chat import GatewayChat, GatewayChatEvent
+from .stream_assembler import StreamAssembler
 
 __all__ = [
     "TUI",
-    "run_tui",
     "TUIOptions",
+    "run_tui",
+    "GatewayChat",
+    "GatewayChatEvent",
+    "StreamAssembler",
 ]

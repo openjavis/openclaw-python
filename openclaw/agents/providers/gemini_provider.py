@@ -27,6 +27,19 @@ from .base import LLMMessage, LLMProvider, LLMResponse
 logger = logging.getLogger(__name__)
 
 
+GEMINI_KNOWN_MODELS = {
+    "gemini-pro",
+    "gemini-pro-vision",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-3-flash-preview",
+    "gemini-3-pro-preview",
+}
+
+
 class GeminiProvider(LLMProvider):
     """
     Google Gemini provider using the NEW google-genai API
@@ -45,6 +58,8 @@ class GeminiProvider(LLMProvider):
 
     Example:
         provider = GeminiProvider("gemini-3-flash-preview", api_key="...")
+        # or with just api_key (uses default model):
+        provider = GeminiProvider(api_key="...")
 
         async for response in provider.stream(messages):
             if response.type == "text_delta":
@@ -54,9 +69,74 @@ class GeminiProvider(LLMProvider):
         https://ai.google.dev/gemini-api/docs/models/gemini
     """
 
+    DEFAULT_MODEL = "gemini-2.5-flash"
+
+    def __init__(
+        self,
+        model: str | None = None,
+        api_key: str | None = None,
+        **kwargs
+    ):
+        """
+        Initialize Gemini provider.
+
+        Args:
+            model: Model name (defaults to DEFAULT_MODEL)
+            api_key: Google API key (required; raises ValueError if empty string provided)
+        """
+        if api_key is not None and api_key == "":
+            raise ValueError("api_key cannot be an empty string")
+        super().__init__(model or self.DEFAULT_MODEL, api_key=api_key, **kwargs)
+
     @property
     def provider_name(self) -> str:
         return "gemini"
+
+    def validate_model(self, model: str) -> bool:
+        """Check if a model name is recognised as a valid Gemini model."""
+        if not model:
+            return False
+        if model in GEMINI_KNOWN_MODELS:
+            return True
+        # Accept any string that starts with "gemini-"
+        return model.startswith("gemini-")
+
+    def _format_messages(self, messages: list[LLMMessage]) -> list:
+        """
+        Format messages for the Gemini API.
+
+        Returns a plain list of dicts when google-genai is not available,
+        otherwise returns list[types.Content] (system messages extracted separately).
+        """
+        if not GENAI_AVAILABLE or types is None:
+            result = []
+            for msg in messages:
+                if msg.role == "system":
+                    continue
+                result.append({"role": msg.role, "content": msg.content})
+            return result
+        # _convert_messages returns (contents, system_instruction) tuple; return just contents
+        contents, _system = self._convert_messages(messages)
+        return contents
+
+    def _format_tools(self, tools: list[dict]) -> list[dict]:
+        """Format tools for the Gemini API (passthrough for now)."""
+        return tools
+
+    async def _make_api_call(self, messages: list, model: str | None = None, **kwargs):
+        """
+        Low-level streaming call to the Gemini API.
+
+        This is a thin wrapper around the google-genai client so that tests
+        can patch it with `patch.object(provider, '_make_api_call', ...)`.
+        """
+        client = self.get_client()
+        resolved_model = model or self.model
+        return client.aio.models.generate_content_stream(
+            model=resolved_model,
+            contents=messages,
+            **kwargs,
+        )
 
     def get_client(self) -> Any:
         """Initialize Gemini client using new API"""

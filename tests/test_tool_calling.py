@@ -8,7 +8,7 @@ from pathlib import Path
 from openclaw.agents.runtime import AgentRuntime
 from openclaw.agents.session import Session
 from openclaw.agents.providers.gemini_provider import GeminiProvider
-from openclaw.agents.tools.bash import BashTool
+from openclaw.agents.tools.bash import create_bash_tool as BashTool
 from openclaw.agents.tools.web import WebSearchTool
 from openclaw.agents.tools.document_gen import PPTGeneratorTool, PDFGeneratorTool
 

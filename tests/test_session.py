@@ -9,6 +9,14 @@ import pytest
 from openclaw.agents.session import Message, Session, SessionManager
 
 
+@pytest.fixture
+def temp_workspace(tmp_path):
+    """Provide a temporary workspace directory."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    return workspace
+
+
 class TestMessage:
     """Test Message class"""
 

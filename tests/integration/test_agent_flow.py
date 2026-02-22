@@ -11,7 +11,7 @@ import pytest
 from openclaw.events import EventType
 from openclaw.agents import AgentRuntime, Session, SessionManager
 from openclaw.agents.runtime import AgentEvent
-from openclaw.agents.tools.bash import BashTool
+from openclaw.agents.tools.bash import create_bash_tool as BashTool
 
 
 class TestAgentFlow:

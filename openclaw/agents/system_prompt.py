@@ -52,7 +52,7 @@ from .system_prompt_sections import (
     build_sandbox_section,
     build_self_update_section,
     build_silent_replies_section,
-    build_skills_section,
+    build_skills_section_workspace,
     build_time_section,
     build_tool_call_style_section,
     build_tooling_section,
@@ -169,7 +169,7 @@ def build_agent_system_prompt(
             lines.append("")
         else:
             # Load skills dynamically
-            lines.extend(build_skills_section(
+            lines.extend(build_skills_section_workspace(
                 workspace_dir=workspace_dir,
                 config=None,  # Will use default config
                 read_tool_name="read_file",
@@ -336,6 +336,155 @@ def _is_soul_file(file: dict) -> bool:
     path = file.get("path", "").strip().replace("\\", "/")
     base_name = path.split("/")[-1] if "/" in path else path
     return base_name.lower() == "soul.md" and "(File" not in file.get("content", "")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Per-session dynamic system prompt builder
+# Mirrors TypeScript buildEmbeddedSystemPrompt() + resolveBootstrapContextForRun()
+# ──────────────────────────────────────────────────────────────────────────────
+
+_BOOTSTRAP_FILENAMES = [
+    "AGENTS.md",
+    "SOUL.md",
+    "TOOLS.md",
+    "IDENTITY.md",
+    "USER.md",
+    "HEARTBEAT.md",
+    "BOOTSTRAP.md",
+    "MEMORY.md",
+]
+
+# Per-file size limits (bytes) matching TS agents.bootstrap defaults
+_DEFAULT_MAX_CHARS_PER_FILE = 32_000
+_DEFAULT_TOTAL_MAX_CHARS = 128_000
+
+
+def resolve_bootstrap_context_for_run(
+    workspace_dir: Path,
+    session_key: str | None = None,
+    max_chars_per_file: int = _DEFAULT_MAX_CHARS_PER_FILE,
+    total_max_chars: int = _DEFAULT_TOTAL_MAX_CHARS,
+    hook_overrides: dict[str, str] | None = None,
+) -> list[dict]:
+    """
+    Load bootstrap files for a run, applying session filtering and size limits.
+
+    Matches TypeScript resolveBootstrapContextForRun().
+
+    Subagent sessions (spawn_depth > 0) only get AGENTS.md + TOOLS.md.
+    Hook overrides (from plugins) can inject or replace file content.
+
+    Args:
+        workspace_dir: Workspace directory.
+        session_key: Session key (used to detect subagent sessions).
+        max_chars_per_file: Per-file character limit.
+        total_max_chars: Total accumulated character limit.
+        hook_overrides: Dict of filename → replacement content from plugins.
+
+    Returns:
+        List of dicts with {"path": str, "content": str}.
+    """
+    # Subagent filter: only AGENTS.md + TOOLS.md for sub-sessions
+    is_subagent = session_key and (":sub:" in session_key or ":spawn:" in session_key)
+    allowed = {"AGENTS.md", "TOOLS.md"} if is_subagent else set(_BOOTSTRAP_FILENAMES)
+
+    files = []
+    total_chars = 0
+
+    for filename in _BOOTSTRAP_FILENAMES:
+        if filename not in allowed:
+            continue
+
+        # Hook override takes precedence
+        if hook_overrides and filename in hook_overrides:
+            content = hook_overrides[filename]
+        else:
+            path = workspace_dir / filename
+            if not path.exists():
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+
+        # Per-file size limit
+        if len(content) > max_chars_per_file:
+            content = content[:max_chars_per_file] + "\n…[truncated]"
+
+        # Total budget
+        if total_chars + len(content) > total_max_chars:
+            remaining = total_max_chars - total_chars
+            if remaining <= 0:
+                break
+            content = content[:remaining] + "\n…[truncated]"
+
+        files.append({"path": filename, "content": content})
+        total_chars += len(content)
+
+    return files
+
+
+def build_embedded_system_prompt(
+    workspace_dir: Path,
+    session_key: str | None = None,
+    tool_names: list[str] | None = None,
+    tool_summaries: dict[str, str] | None = None,
+    skills: list[dict] | None = None,
+    model_name: str | None = None,
+    user_timezone: str | None = None,
+    runtime_info: str | None = None,
+    hook_overrides: dict[str, str] | None = None,
+    prompt_mode: Literal["full", "minimal", "none"] = "full",
+    extra_system_prompt: str | None = None,
+    max_chars_per_file: int = _DEFAULT_MAX_CHARS_PER_FILE,
+    total_max_chars: int = _DEFAULT_TOTAL_MAX_CHARS,
+) -> str:
+    """
+    Per-session dynamic system prompt builder.
+
+    Matches TypeScript buildEmbeddedSystemPrompt():
+    1. resolveBootstrapContextForRun() → load AGENTS.md, SOUL.md, etc.
+    2. applyBootstrapHookOverrides() (passed as hook_overrides)
+    3. buildWorkspaceSkillSnapshot() → already done in skills param
+    4. buildAgentSystemPrompt() with all params
+
+    Args:
+        workspace_dir: Agent workspace directory.
+        session_key: Session key for subagent detection.
+        tool_names: Names of available tools.
+        tool_summaries: Per-tool description summaries.
+        skills: Pre-loaded skill list.
+        model_name: Current model (for aliases).
+        user_timezone: User's timezone string.
+        runtime_info: Runtime/version info string.
+        hook_overrides: Plugin-injected bootstrap file overrides.
+        prompt_mode: "full" | "minimal" | "none".
+        extra_system_prompt: Injected extra context.
+        max_chars_per_file: Per-file size limit.
+        total_max_chars: Total bootstrap context size limit.
+
+    Returns:
+        Assembled system prompt string.
+    """
+    context_files = resolve_bootstrap_context_for_run(
+        workspace_dir=workspace_dir,
+        session_key=session_key,
+        max_chars_per_file=max_chars_per_file,
+        total_max_chars=total_max_chars,
+        hook_overrides=hook_overrides,
+    )
+
+    return build_agent_system_prompt(
+        workspace_dir=workspace_dir,
+        tool_names=tool_names,
+        tool_summaries=tool_summaries,
+        context_files=context_files,
+        skills=skills,
+        user_timezone=user_timezone,
+        runtime_info=runtime_info,
+        prompt_mode=prompt_mode,
+        extra_system_prompt=extra_system_prompt,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────

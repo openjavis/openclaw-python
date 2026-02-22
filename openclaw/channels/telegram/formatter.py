@@ -2,7 +2,58 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import List
+
+
+def escape_html(text: str) -> str:
+    """Escape HTML special characters for safe use in Telegram HTML messages."""
+    if not text:
+        return text
+    text = text.replace("&", "&amp;")
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+    return text
+
+
+def escape_html_attr(text: str) -> str:
+    """Escape HTML special characters for use in HTML attribute values."""
+    text = escape_html(text)
+    text = text.replace('"', "&quot;")
+    return text
+
+
+@dataclass
+class TelegramChunk:
+    """A single formatted chunk ready to send to Telegram."""
+    html: str
+    plain: str
+    length: int
+
+
+def markdown_to_telegram_chunks(
+    text: str,
+    limit: int = 4096,
+) -> List["TelegramChunk"]:
+    """
+    Convert Markdown text to a list of Telegram-ready HTML chunks.
+
+    Each chunk fits within *limit* characters of the HTML output.
+
+    Args:
+        text: Markdown input text.
+        limit: Maximum characters per chunk (Telegram limit = 4096).
+
+    Returns:
+        List of TelegramChunk objects.
+    """
+    html = markdown_to_html(text)
+    raw_chunks = chunk_message(html, max_length=limit)
+    return [
+        TelegramChunk(html=c, plain=re.sub(r"<[^>]+>", "", c), length=len(c))
+        for c in raw_chunks
+    ]
+
 
 def markdown_to_html(text: str) -> str:
     """Convert Markdown to Telegram HTML

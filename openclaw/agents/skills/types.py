@@ -27,6 +27,30 @@ class Skill:
 
 
 @dataclass
+class LoadSkillsResult:
+    """Result of loading skills from a directory."""
+    skills: list["Skill"] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SkillRequires:
+    """
+    Skill requirements (matches TS SkillRequires).
+
+    Attributes:
+        bins: All of these binaries must be on PATH
+        any_bins: At least one of these binaries must be on PATH
+        env: All of these environment variables must be set
+        config: All of these config keys must be present
+    """
+    bins: list[str] = field(default_factory=list)
+    any_bins: list[str] = field(default_factory=list)
+    env: list[str] = field(default_factory=list)
+    config: list[str] = field(default_factory=list)
+
+
+@dataclass
 class SkillInstallSpec:
     """
     Installation specification (matches TS SkillInstallSpec).

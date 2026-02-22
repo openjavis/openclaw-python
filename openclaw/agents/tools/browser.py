@@ -46,6 +46,9 @@ class BrowserTool(AgentTool):
                         "screenshot",
                         "click",
                         "type",
+                        "get_text",
+                        "wait",
+                        "extract",
                         "eval",
                         "pdf",
                         "close",
@@ -97,7 +100,13 @@ class BrowserTool(AgentTool):
             elif action == "click":
                 return await self._click(params)
             elif action == "type":
-                return await self._type_text(params)
+                return await self._type(params)
+            elif action == "get_text":
+                return await self._get_text(params)
+            elif action == "wait":
+                return await self._wait_for_selector(params)
+            elif action == "extract":
+                return await self._extract(params)
             elif action == "eval":
                 return await self._eval(params)
             elif action == "pdf":
@@ -214,7 +223,7 @@ class BrowserTool(AgentTool):
 
         return ToolResult(success=True, content=f"Clicked {selector}")
 
-    async def _type_text(self, params: dict[str, Any]) -> ToolResult:
+    async def _type(self, params: dict[str, Any]) -> ToolResult:
         """Type text into element"""
         page_id = params.get("page_id", "default")
         selector = params.get("selector", "")
@@ -230,6 +239,10 @@ class BrowserTool(AgentTool):
         await page.fill(selector, text)
 
         return ToolResult(success=True, content=f"Typed '{text}' into {selector}")
+
+    async def _type_text(self, params: dict[str, Any]) -> ToolResult:
+        """Alias for _type (backward compatibility)."""
+        return await self._type(params)
 
     async def _eval(self, params: dict[str, Any]) -> ToolResult:
         """Evaluate JavaScript"""
@@ -272,3 +285,57 @@ class BrowserTool(AgentTool):
         del self._pages[page_id]
 
         return ToolResult(success=True, content=f"Closed page '{page_id}'")
+
+    async def _get_text(self, params: dict[str, Any]) -> ToolResult:
+        """Get text content of an element"""
+        page_id = params.get("page_id", "default")
+        selector = params.get("selector", "")
+
+        if not selector:
+            return ToolResult(success=False, content="", error="selector required")
+
+        page = self._pages.get(page_id)
+        if not page:
+            return ToolResult(success=False, content="", error=f"Page '{page_id}' not found")
+
+        text = await page.inner_text(selector)
+        return ToolResult(success=True, content=text or "")
+
+    async def _wait_for_selector(self, params: dict[str, Any]) -> ToolResult:
+        """Wait for a CSS selector to appear in the page"""
+        page_id = params.get("page_id", "default")
+        selector = params.get("selector", "")
+        timeout = params.get("timeout", 30000)
+
+        if not selector:
+            return ToolResult(success=False, content="", error="selector required")
+
+        page = self._pages.get(page_id)
+        if not page:
+            return ToolResult(success=False, content="", error=f"Page '{page_id}' not found")
+
+        await page.wait_for_selector(selector, timeout=timeout)
+        return ToolResult(success=True, content=f"Selector '{selector}' found")
+
+    async def _extract(self, params: dict[str, Any]) -> ToolResult:
+        """Extract data from page using a dict of {key: selector} mappings"""
+        page_id = params.get("page_id", "default")
+        selectors: dict[str, str] = params.get("selectors", {})
+
+        page = self._pages.get(page_id)
+        if not page:
+            return ToolResult(success=False, content="", error=f"Page '{page_id}' not found")
+
+        extracted: dict[str, Any] = {}
+        for key, selector in selectors.items():
+            try:
+                elements = await page.query_selector_all(selector)
+                if len(elements) == 1:
+                    extracted[key] = await elements[0].inner_text()
+                else:
+                    extracted[key] = [await el.inner_text() for el in elements]
+            except Exception as exc:
+                extracted[key] = f"error: {exc}"
+
+        import json as _json
+        return ToolResult(success=True, content=_json.dumps(extracted))

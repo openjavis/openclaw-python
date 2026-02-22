@@ -728,14 +728,17 @@ def build_reasoning_format_section(
     ]
 
 
-def build_skills_section(
+def build_skills_section_workspace(
     workspace_dir: Path | None = None,
     config: Any | None = None,
     read_tool_name: str = "read_file"
 ) -> list[str]:
     """
-    Build the Skills section (matches TS skills integration).
-    
+    Build the Skills section dynamically from the workspace (runtime variant).
+
+    Use build_skills_section(skills_prompt, is_minimal, read_tool_name) for the
+    TS section-builder API.
+
     Args:
         workspace_dir: Workspace directory
         config: OpenClaw configuration

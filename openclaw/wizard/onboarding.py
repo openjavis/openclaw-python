@@ -771,17 +771,55 @@ async def _configure_channels(mode: str) -> Optional[dict]:
 
 
 def mark_onboarding_complete(workspace_dir: Path) -> None:
-    """Mark onboarding as complete"""
+    """Mark onboarding as complete and update workspace-state.json"""
     marker_file = workspace_dir / ".openclaw" / "onboarding-complete"
     marker_file.parent.mkdir(parents=True, exist_ok=True)
     
+    now_iso = datetime.now().isoformat()
+    
     marker_data = {
-        "completed_at": datetime.now().isoformat(),
+        "completed_at": now_iso,
         "version": "0.6.0",
     }
     
     marker_file.write_text(json.dumps(marker_data, indent=2))
     logger.info(f"Onboarding marked complete: {marker_file}")
+    
+    # Write workspace-state.json (matches TypeScript onboardingCompletedAt tracking)
+    write_workspace_state(workspace_dir, onboarding_completed_at=now_iso)
+
+
+def write_workspace_state(
+    workspace_dir: Path,
+    bootstrap_seeded_at: Optional[str] = None,
+    onboarding_completed_at: Optional[str] = None,
+) -> None:
+    """
+    Write or update workspace-state.json.
+    
+    Matches TypeScript workspace-state.json tracking:
+    - bootstrapSeededAt: when AGENTS.md / SOUL.md / etc were first seeded
+    - onboardingCompletedAt: when onboarding wizard completed
+    """
+    state_file = workspace_dir / "workspace-state.json"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Load existing state
+    existing: dict = {}
+    if state_file.exists():
+        try:
+            existing = json.loads(state_file.read_text())
+        except Exception:
+            existing = {}
+    
+    # Merge updates
+    if bootstrap_seeded_at is not None:
+        existing["bootstrapSeededAt"] = bootstrap_seeded_at
+    if onboarding_completed_at is not None:
+        existing["onboardingCompletedAt"] = onboarding_completed_at
+    
+    state_file.write_text(json.dumps(existing, indent=2))
+    logger.debug(f"Updated workspace-state.json: {state_file}")
 
 
 def is_first_run(workspace_dir: Path) -> bool:

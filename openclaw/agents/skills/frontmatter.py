@@ -223,3 +223,33 @@ def extract_description_from_body(body: str, max_length: int = 200) -> str:
         first_para = first_para[:max_length] + "..."
     
     return first_para
+
+
+def parse_skill_frontmatter(content: str, path: str) -> "Any | None":
+    """
+    Parse a SKILL.md file into a Skill object.
+
+    Convenience wrapper that combines parse_frontmatter + Skill construction.
+
+    Args:
+        content: Full SKILL.md file content.
+        path: File path (used as the skill's ``location``).
+
+    Returns:
+        Skill object, or None if parsing fails.
+    """
+    from .types import Skill
+
+    frontmatter, body = parse_frontmatter(content)
+    if not frontmatter:
+        return None
+
+    name = frontmatter.get("name") or ""
+    description = frontmatter.get("description") or extract_description_from_body(body)
+    if not name:
+        return None
+
+    skill = Skill(name=name, description=description, location=path)
+    # Attach the full body so tests can inspect it
+    skill.content = body  # type: ignore[attr-defined]
+    return skill

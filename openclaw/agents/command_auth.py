@@ -128,16 +128,14 @@ def resolve_command_authorization(
     sender_is_owner = matched_sender is not None
     
     # Determine authorization
-    require_owner = enforce_owner_for_commands or owner_list_configured
-    
-    if not require_owner:
-        # No owner requirement
+    # When enforce_owner_for_commands=False, all senders are authorized regardless of owner list
+    if not enforce_owner_for_commands:
         is_authorized = True
     elif allow_all:
         # Wildcard allowlist
         is_authorized = True
     elif owner_list_configured:
-        # Explicit owner list
+        # Explicit owner list with enforcement enabled
         is_authorized = sender_is_owner
     else:
         # Default: allow

@@ -17,6 +17,26 @@ from .tools.base import AgentTool
 logger = logging.getLogger(__name__)
 
 
+class _NullProvider(LLMProvider):
+    """Null provider used when no real provider is given (for testing/structure validation)."""
+
+    def __init__(self, model: str = "null/model", **kwargs):
+        super().__init__(model=model, **kwargs)
+
+    async def stream(self, messages, tools=None, max_tokens=4096, **kwargs):
+        from .events import AgentEventType
+        from .providers.base import LLMResponse
+        yield LLMResponse(type="text_delta", content="(no provider configured)")
+        yield LLMResponse(type="done", content="")
+
+    def get_client(self):
+        return None
+
+    @property
+    def provider_name(self) -> str:
+        return "null"
+
+
 class Agent:
     """
     Main Agent class providing high-level API for agent interactions
@@ -46,7 +66,7 @@ class Agent:
     
     def __init__(
         self,
-        provider: LLMProvider,
+        provider: LLMProvider | None = None,
         tools: list[AgentTool] | None = None,
         model: str = "google/gemini-3-pro-preview",
         thinking_level: str = "off",
@@ -56,12 +76,14 @@ class Agent:
         Initialize agent
         
         Args:
-            provider: LLM provider for model inference
+            provider: LLM provider for model inference (optional; a null provider is used if None)
             tools: List of available tools
             model: Model to use (format: "provider/model")
             thinking_level: Thinking level ("off", "on", "verbose")
             system_prompt: Optional system prompt
         """
+        if provider is None:
+            provider = _NullProvider(model=model)
         self.provider = provider
         self.tools = tools or []
         self.model = model
@@ -85,59 +107,88 @@ class Agent:
     
     async def prompt(
         self,
-        message: str | list[str],
+        message: str | list[Any],
         system_prompt: str | None = None,
         images: list[str] | None = None,
-    ) -> list[Any]:
+    ):
         """
-        Send prompt to agent and get response with optional image attachments
-        
+        Send prompt and yield agent events as they are emitted.
+
+        This is an async generator — callers use ``async for event in agent.prompt(...)``.
+
         Args:
-            message: User message or list of messages
-            system_prompt: Optional system prompt override
-            images: Optional list of image URLs or file paths
-            
-        Returns:
-            List of messages in conversation
+            message: User message string, list of strings, or list of UserMessage objects.
+            system_prompt: Optional system prompt override.
+            images: Optional list of image URLs or file paths.
+
+        Yields:
+            AgentEvent objects (AgentStartEvent, TextDeltaEvent, AgentEndEvent, …).
         """
+        import asyncio as _asyncio
         from .agent_loop import AgentMessage
-        
-        # Convert single message to list
-        prompts = [message] if isinstance(message, str) else message
-        
-        # Use instance system prompt if not overridden
-        sys_prompt = system_prompt or self.system_prompt
-        
-        # If images provided, add them to the first message
-        if images and prompts:
-            # Replace first prompt with AgentMessage that includes images
-            first_msg = AgentMessage(
-                role="user",
-                content=prompts[0],
-                images=images
-            )
-            # Store in state
-            self.loop.state.messages = []
-            if sys_prompt:
-                self.loop.state.messages.append(AgentMessage(
-                    role="system",
-                    content=sys_prompt
-                ))
-            self.loop.state.messages.append(first_msg)
-            for p in prompts[1:]:
-                self.loop.state.messages.append(AgentMessage(role="user", content=p))
-            
-            # Run loop continuation
-            messages = await self.loop.agent_loop_continue()
+        from .events import AgentEvent
+
+        # Collect events through a queue so the generator can yield them while
+        # the agent loop runs concurrently.
+        queue: _asyncio.Queue[AgentEvent | None] = _asyncio.Queue()
+
+        def _on_event(event: AgentEvent) -> None:
+            queue.put_nowait(event)
+
+        # Subscribe to all event types via a wildcard listener
+        self.event_emitter.on("*", _on_event)
+
+        # Build prompts list
+        if isinstance(message, str):
+            prompts = [message]
+        elif message and hasattr(message[0], "content"):
+            # UserMessage objects — extract content strings
+            prompts = [m.content if hasattr(m, "content") else str(m) for m in message]
         else:
-            # Run agent loop normally
-            messages = await self.loop.agent_loop(
-                prompts=prompts,
-                system_prompt=sys_prompt,
-                model=self.model
-            )
-        
-        return messages
+            prompts = list(message)
+
+        sys_prompt = system_prompt or self.system_prompt
+
+        # Run the agent loop as a background task
+        async def _run() -> None:
+            try:
+                if images and prompts:
+                    self.loop.state.messages = []
+                    if sys_prompt:
+                        self.loop.state.messages.append(AgentMessage(
+                            role="system", content=sys_prompt
+                        ))
+                    self.loop.state.messages.append(AgentMessage(
+                        role="user", content=prompts[0], images=images
+                    ))
+                    for p in prompts[1:]:
+                        self.loop.state.messages.append(AgentMessage(role="user", content=p))
+                    await self.loop.agent_loop_continue()
+                else:
+                    await self.loop.agent_loop(
+                        prompts=prompts,
+                        system_prompt=sys_prompt,
+                        model=self.model,
+                    )
+            finally:
+                queue.put_nowait(None)  # sentinel
+
+        task = _asyncio.create_task(_run())
+
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield event
+        finally:
+            self.event_emitter.off("*", _on_event)
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (_asyncio.CancelledError, Exception):
+                    pass
     
     async def continue_conversation(self) -> list[Any]:
         """

@@ -125,6 +125,52 @@ def append_message_to_transcript(
         return False, None, str(e)
 
 
+_MAX_TEXT_BLOCK_CHARS = 12_000   # Per text-content block
+_MAX_MESSAGE_BYTES = 128 * 1024  # 128 KB per message
+
+
+def _sanitize_history_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Sanitize history messages before sending to clients.
+
+    Mirrors TypeScript chat.history sanitization:
+    - Truncates individual text blocks to 12K chars
+    - Enforces 128KB budget per message
+    - Removes sensitive / internal fields
+    """
+    result = []
+    for msg in messages:
+        msg = dict(msg)  # shallow copy
+
+        # Remove sensitive internal fields
+        msg.pop("_internal", None)
+        msg.pop("systemPrompt", None)
+
+        # Sanitize content blocks
+        content = msg.get("content")
+        if isinstance(content, list):
+            sanitized_content = []
+            budget = _MAX_MESSAGE_BYTES
+            for block in content:
+                if not isinstance(block, dict):
+                    sanitized_content.append(block)
+                    continue
+                block = dict(block)
+                if block.get("type") == "text":
+                    text = block.get("text", "")
+                    if len(text) > _MAX_TEXT_BLOCK_CHARS:
+                        block["text"] = text[:_MAX_TEXT_BLOCK_CHARS] + "…[truncated]"
+                block_bytes = len(json.dumps(block).encode())
+                if block_bytes <= budget:
+                    sanitized_content.append(block)
+                    budget -= block_bytes
+                # else: drop the block – over budget
+            msg["content"] = sanitized_content
+
+        result.append(msg)
+    return result
+
+
 def broadcast_chat_event(
     connection: GatewayConnection,
     event_type: str,  # "delta" | "final" | "error" | "aborted" | "start"
@@ -227,13 +273,27 @@ class ChatHistoryMethod:
         transcript_path = resolve_transcript_path(session_id, sessions_dir)
         logger.info(f"chat.history: sessionKey={session_key}, sessionId={session_id}, transcript={transcript_path}")
         messages = read_session_messages(transcript_path, limit=min(limit, 1000))
-        
+
+        # Sanitize messages — mirrors TypeScript chat.history sanitization
+        messages = _sanitize_history_messages(messages)
+
+        # Resolve thinkingLevel and verboseLevel from SessionEntry
+        thinking_level: str | None = None
+        verbose_level: str | None = None
+        try:
+            entry = session_manager.get_session_entry(session_key)
+            if entry:
+                thinking_level = getattr(entry, "thinkingLevel", None)
+                verbose_level = getattr(entry, "verboseLevel", None)
+        except Exception:
+            pass
+
         return {
             "sessionKey": session_key,
             "sessionId": session_id,
             "messages": messages,
-            "thinkingLevel": None,
-            "verboseLevel": None,
+            "thinkingLevel": thinking_level,
+            "verboseLevel": verbose_level,
         }
 
 
@@ -349,8 +409,8 @@ class ChatSendMethod:
             payload={"runId": run_id, "status": "started"}
         ))
         
-        # Execute agent asynchronously
-        asyncio.create_task(self._execute_agent_turn(
+        # Create agent task and register for abort support
+        task = asyncio.create_task(self._execute_agent_turn(
             connection=connection,
             channel_manager=channel_manager,
             session=session,
@@ -360,7 +420,32 @@ class ChatSendMethod:
             run_id=run_id,
             transcript_path=transcript_path,
         ))
-        
+
+        # Tag task with metadata so abort can find it by session_key
+        task._openclaw_meta = {"session_key": session_key, "run_id": run_id}  # type: ignore[attr-defined]
+
+        # Register in gateway.active_runs for abort support
+        if connection.gateway:
+            if not hasattr(connection.gateway, "active_runs"):
+                connection.gateway.active_runs = {}
+            connection.gateway.active_runs[run_id] = task
+
+            # Register with chat_registry if available
+            chat_registry = getattr(connection.gateway, "chat_registry", None)
+            if chat_registry is not None:
+                chat_registry.add_run(
+                    run_id=run_id,
+                    client_run_id=idempotency_key,
+                    session_key=session_key,
+                    conn_id=getattr(connection, "id", ""),
+                )
+
+            # Clean up registration when task completes
+            def _cleanup(t: asyncio.Task) -> None:
+                if connection.gateway:
+                    connection.gateway.active_runs.pop(run_id, None)
+            task.add_done_callback(_cleanup)
+
         # Return acknowledgment (already sent via send_response above)
         return {"runId": run_id, "status": "started"}
     
@@ -514,42 +599,137 @@ class ChatSendMethod:
 
 
 class ChatAbortMethod:
-    """Abort running agent execution"""
-    
+    """Abort running agent execution.
+
+    Mirrors TypeScript chat.abort:
+    1. Look up run by sessionKey or runId in gateway.active_runs
+    2. Cancel the asyncio Task (or set abort Event)
+    3. Collect partial snapshot from run buffer
+    4. Persist aborted-partial to transcript
+    5. Broadcast abort-completion event
+    """
+
     name = "chat.abort"
     description = "Abort running agent execution"
     category = "chat"
-    
+
     async def execute(self, connection: GatewayConnection, params: dict[str, Any]) -> dict[str, Any]:
         """
-        Abort agent execution
-        
+        Abort agent execution.
+
         Args:
             params: {
                 "sessionKey": str,
                 "runId": str (optional)
             }
-        
+
         Returns:
-            {
-                "ok": true,
-                "aborted": bool,
-                "runIds": list[str]
-            }
+            {"ok": True, "aborted": bool, "runIds": list[str]}
         """
         session_key = params.get("sessionKey")
         run_id = params.get("runId")
-        
+
         if not session_key:
             raise ValueError("sessionKey is required")
-        
-        # TODO: Implement abort controller management
-        # For now, just acknowledge
-        
+
+        if not connection.gateway:
+            return {"ok": True, "aborted": False, "runIds": []}
+
+        aborted_run_ids: list[str] = []
+
+        # -------------------------------------------------------------------
+        # 1. Find matching active runs
+        # -------------------------------------------------------------------
+        active_runs: dict[str, asyncio.Task] = getattr(connection.gateway, "active_runs", {})
+        chat_registry = getattr(connection.gateway, "chat_registry", None)
+
+        # Build list of run_ids to abort
+        target_run_ids: list[str] = []
+        if run_id and run_id in active_runs:
+            target_run_ids.append(run_id)
+        else:
+            # Abort all runs matching session_key
+            for rid, task in list(active_runs.items()):
+                task_meta = getattr(task, "_openclaw_meta", {})
+                if task_meta.get("session_key") == session_key:
+                    target_run_ids.append(rid)
+
+        # -------------------------------------------------------------------
+        # 2. Abort each run
+        # -------------------------------------------------------------------
+        for rid in target_run_ids:
+            task = active_runs.get(rid)
+            partial_text = ""
+
+            # Signal abort via registry abort event (preferred)
+            if chat_registry is not None:
+                chat_registry.abort_run(rid)
+                partial_text = "".join(chat_registry.get_buffer(rid))
+                chat_registry.clear_buffer(rid)
+
+            # Cancel the asyncio Task
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=3.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass
+
+            # Remove from active_runs
+            active_runs.pop(rid, None)
+            aborted_run_ids.append(rid)
+
+            # -------------------------------------------------------------------
+            # 3. Persist partial snapshot to transcript
+            # -------------------------------------------------------------------
+            if partial_text:
+                try:
+                    gw = connection.gateway
+                    session_manager = getattr(
+                        getattr(gw, "channel_manager", None), "session_manager", None
+                    )
+                    if session_manager:
+                        session = session_manager.get_or_create_session(session_key=session_key)
+                        sessions_dir = Path(
+                            getattr(session_manager, "sessions_dir",
+                                    getattr(session_manager, "_sessions_dir",
+                                            Path.home() / ".openclaw" / ".sessions"))
+                        )
+                        transcript_path = resolve_transcript_path(session.session_id, sessions_dir)
+                        now = datetime.now(UTC)
+                        aborted_msg = {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": partial_text}],
+                            "timestamp": int(now.timestamp() * 1000),
+                            "stopReason": "aborted",
+                        }
+                        append_message_to_transcript(transcript_path, aborted_msg, create_if_missing=False)
+                except Exception as exc:
+                    logger.warning(f"Failed to persist partial abort snapshot: {exc}")
+
+            # -------------------------------------------------------------------
+            # 4. Broadcast abort event
+            # -------------------------------------------------------------------
+            if connection.gateway:
+                abort_payload: dict[str, Any] = {
+                    "runId": rid,
+                    "sessionKey": session_key,
+                    "state": "aborted",
+                }
+                if partial_text:
+                    abort_payload["message"] = {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": partial_text}],
+                        "stopReason": "aborted",
+                    }
+                asyncio.create_task(
+                    connection.gateway.broadcast_event("chat", abort_payload)
+                )
+
         return {
             "ok": True,
-            "aborted": False,
-            "runIds": [],
+            "aborted": len(aborted_run_ids) > 0,
+            "runIds": aborted_run_ids,
         }
 
 

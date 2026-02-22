@@ -56,9 +56,11 @@ class AgentEventType(str, Enum):
 @dataclass
 class AgentEvent(BaseEvent):
     """Base agent event"""
-    
+
     type: AgentEventType
-    timestamp: float = field(default_factory=lambda: asyncio.get_event_loop().time())
+    # Give 'source' a default so subclass __init__ calls don't need to pass it
+    source: str = "agent"
+    timestamp: float = field(default_factory=lambda: __import__("time").monotonic())
     payload: dict[str, Any] = field(default_factory=dict)
 
 
@@ -332,31 +334,34 @@ class EventEmitter:
                 self._listeners[event_type].remove(callback)
     
     async def emit(self, event: AgentEvent) -> None:
-        """Emit event to all listeners"""
+        """Emit event to all listeners (including wildcard '*' listeners)."""
         event_type = event.type
-        
-        # Call sync listeners
-        if event_type in self._listeners:
-            for callback in self._listeners[event_type]:
-                try:
-                    callback(event)
-                except Exception as e:
-                    # Don't let listener errors break event emission
-                    import logging
-                    logging.getLogger(__name__).error(
-                        f"Error in event listener for {event_type}: {e}",
-                        exc_info=True
-                    )
-        
-        # Call async listeners
-        if event_type in self._async_listeners:
-            for callback in self._async_listeners[event_type]:
-                try:
-                    await callback(event)
-                except Exception as e:
-                    import logging
-                    logging.getLogger(__name__).error(
-                        f"Error in async event listener for {event_type}: {e}",
+
+        # Keys to check: the specific event type and the wildcard "*"
+        keys_to_check = [event_type, "*"]
+
+        for key in keys_to_check:
+            # Call sync listeners
+            if key in self._listeners:
+                for callback in list(self._listeners[key]):
+                    try:
+                        callback(event)
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error(
+                            f"Error in event listener for {key}: {e}",
+                            exc_info=True
+                        )
+
+            # Call async listeners
+            if key in self._async_listeners:
+                for callback in list(self._async_listeners[key]):
+                    try:
+                        await callback(event)
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error(
+                            f"Error in async event listener for {key}: {e}",
                         exc_info=True
                     )
     

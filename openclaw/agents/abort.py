@@ -51,6 +51,10 @@ class AbortSignal:
         if callback in self._callbacks:
             self._callbacks.remove(callback)
     
+    def abort(self, reason: Exception | None = None) -> None:
+        """Abort the signal (public method, matches AbortController.abort() API)"""
+        self._trigger_abort(reason)
+
     def _trigger_abort(self, reason: Exception | None = None) -> None:
         """Internal method to trigger abort"""
         if self._aborted:

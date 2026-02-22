@@ -31,9 +31,11 @@ logger = logging.getLogger(__name__)
 
 
 def create_bash_tool(
-    cwd: str,
+    cwd: str | None = None,
     operations: BashOperations | None = None,
     command_prefix: str | None = None,
+    timeout: int | None = None,
+    working_dir: str | None = None,
 ) -> AgentToolBase:
     """
     Create a bash tool configured for a specific working directory.
@@ -42,19 +44,35 @@ def create_bash_tool(
         cwd: Current working directory for commands
         operations: Bash operations implementation (defaults to local subprocess)
         command_prefix: Optional prefix to prepend to commands (e.g., "shopt -s expand_aliases")
+        timeout: Default timeout in seconds for commands (can be overridden per-call via params)
+        working_dir: Alias for cwd (for backward compatibility)
         
     Returns:
         Configured BashTool instance
     """
+    import os as _os
+    # working_dir is an alias for cwd
+    if working_dir is not None and cwd is None:
+        cwd = working_dir
+    if cwd is None:
+        cwd = _os.getcwd()
+    default_timeout = timeout
     ops = operations or DefaultBashOperations()
     
+    _cwd = cwd
+    _default_timeout = default_timeout
+
     class BashTool(AgentToolBase[dict, dict]):
         """Bash command execution tool"""
-        
+
+        # Expose configuration on the instance for introspection/testing
+        working_dir: str = _cwd
+        default_timeout: int | None = _default_timeout
+
         @property
         def name(self) -> str:
             return "bash"
-        
+
         @property
         def label(self) -> str:
             return "Bash"
@@ -96,7 +114,7 @@ def create_bash_tool(
             """Execute bash command with streaming and truncation"""
             
             command = params["command"]
-            timeout = params.get("timeout")
+            timeout = params.get("timeout") or default_timeout
             
             # Apply command prefix if configured
             resolved_command = f"{command_prefix}\n{command}" if command_prefix else command
@@ -255,4 +273,9 @@ def create_bash_tool(
     return BashTool()
 
 
-__all__ = ["create_bash_tool"]
+# Module-level BashTool alias so tests can do:
+#   from openclaw.agents.tools.bash import BashTool
+#   tool = BashTool()  or  tool = create_bash_tool(cwd)
+BashTool = create_bash_tool
+
+__all__ = ["create_bash_tool", "BashTool"]

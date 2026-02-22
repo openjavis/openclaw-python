@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from openclaw.agents.runtime import MultiProviderRuntime
 from openclaw.agents.session import Session
-from openclaw.agents.tools.simple import SimpleTool
+from openclaw.agents.tools.base import SimpleTool
 import tempfile
 
 

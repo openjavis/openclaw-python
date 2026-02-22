@@ -212,6 +212,96 @@ def extract_text_from_content(content: Any) -> str:
     return str(content)
 
 
+def inject_history_images_into_messages(
+    messages: list[dict[str, Any]],
+    images: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Inject image references into message history for multi-turn conversations.
+
+    Matches TypeScript injectHistoryImagesIntoMessages() in attempt.ts:
+    - Takes message history, finds image references by index
+    - Converts string content to array format where necessary
+    - Prevents duplicates (only injects if not already present)
+
+    Args:
+        messages: Message history dicts.
+        images: List of image URLs / base64 data to inject into the last
+                user message if they are not already embedded.
+
+    Returns:
+        Updated messages list (shallow copy of the list, dicts may be mutated).
+    """
+    if not images:
+        return messages
+
+    messages = list(messages)  # shallow copy
+
+    # Find the last user message
+    last_user_idx = -1
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            last_user_idx = i
+            break
+
+    if last_user_idx == -1:
+        return messages
+
+    msg = dict(messages[last_user_idx])
+    content = msg.get("content", [])
+
+    # Normalize content to list format
+    if isinstance(content, str):
+        content = [{"type": "text", "text": content}]
+    else:
+        content = list(content)
+
+    # Collect already-present image URLs/data to deduplicate
+    existing_images: set[str] = set()
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "image":
+            src = block.get("source", {})
+            if isinstance(src, dict):
+                existing_images.add(src.get("url", "") or src.get("data", ""))
+            elif isinstance(src, str):
+                existing_images.add(src)
+
+    # Inject new images
+    for img in images:
+        if img in existing_images:
+            continue
+        if img.startswith("data:"):
+            # base64 data URI
+            try:
+                header, data = img.split(",", 1)
+                media_type = header.split(":")[1].split(";")[0]
+            except Exception:
+                media_type = "image/jpeg"
+                data = img
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": data,
+                },
+            })
+        else:
+            # URL reference
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "url",
+                    "url": img,
+                },
+            })
+        existing_images.add(img)
+
+    msg["content"] = content
+    messages[last_user_idx] = msg
+    return messages
+
+
 def validate_message_sequence(messages: list[dict[str, Any]]) -> tuple[bool, str | None]:
     """
     Validate message sequence for correct role ordering

@@ -44,21 +44,20 @@ async def test_next_id():
 async def test_call_success():
     """Test successful RPC call"""
     client = GatewayRPCClient()
-    
-    mock_response = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "result": {"status": "ok"}
-    }
-    
+
+    # The call() method does a connect handshake (recv #1, id=1) then the
+    # actual request (recv #2, id=2).  The mock must return matching ids.
+    connect_resp = '{"jsonrpc": "2.0", "id": 1, "result": {}}'
+    method_resp = '{"jsonrpc": "2.0", "id": 2, "result": {"status": "ok"}}'
+
     with patch("websockets.connect") as mock_connect:
         mock_ws = AsyncMock()
         mock_ws.send = AsyncMock()
-        mock_ws.recv = AsyncMock(return_value='{"jsonrpc": "2.0", "id": 1, "result": {"status": "ok"}}')
+        mock_ws.recv = AsyncMock(side_effect=[connect_resp, method_resp])
         mock_connect.return_value.__aenter__.return_value = mock_ws
-        
+
         result = await client.call("test.method", {"param": "value"})
-        
+
         assert result == {"status": "ok"}
         mock_ws.send.assert_called()
 
@@ -71,8 +70,11 @@ async def test_call_error():
     with patch("websockets.connect") as mock_connect:
         mock_ws = AsyncMock()
         mock_ws.send = AsyncMock()
-        mock_ws.recv = AsyncMock(return_value='{"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}}')
+        # id=1 for connect handshake, id=2 for actual request (error)
+        connect_resp = '{"jsonrpc": "2.0", "id": 1, "result": {}}'
+        error_resp = '{"jsonrpc": "2.0", "id": 2, "error": {"code": -32601, "message": "Method not found"}}'
+        mock_ws.recv = AsyncMock(side_effect=[connect_resp, error_resp])
         mock_connect.return_value.__aenter__.return_value = mock_ws
-        
+
         with pytest.raises(GatewayRPCError, match="Method not found"):
             await client.call("unknown.method")

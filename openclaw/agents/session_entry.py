@@ -138,6 +138,12 @@ class SessionEntry(BaseModel):
     cliSessionIds: Optional[dict[str, str]] = Field(None, description="CLI tool session IDs")
     claudeCliSessionId: Optional[str] = Field(None, description="Claude CLI session ID")
     
+    # Sub-agent depth
+    spawnDepth: Optional[int] = Field(None, description="0=main, 1=sub-agent, 2=sub-sub-agent")
+    
+    # Token freshness
+    totalTokensFresh: Optional[bool] = Field(None, description="Whether totalTokens is from a fresh snapshot")
+    
     # Flags
     systemSent: Optional[bool] = Field(None, description="System message sent flag")
     abortedLastRun: Optional[bool] = Field(None, description="Last run aborted flag")
@@ -236,27 +242,58 @@ class SessionStore(RootModel[dict[str, SessionEntry]]):
         return store
 
 
-def merge_session_entry(existing: SessionEntry, patch: dict[str, Any]) -> SessionEntry:
+def merge_session_entry(existing: SessionEntry | None, patch: dict[str, Any]) -> SessionEntry:
     """
-    Merge a patch into an existing SessionEntry
-    
+    Merge a patch dict into an existing SessionEntry (or create a new one if existing is None).
+
+    The patch can use either camelCase (sessionId) or snake_case (session_id) keys —
+    both are normalised before merging.
+
     Args:
-        existing: The existing SessionEntry
-        patch: Partial update data
-        
+        existing: The existing SessionEntry or None to create from scratch.
+        patch: Partial update data (camelCase or snake_case keys).
+
     Returns:
-        Updated SessionEntry with merged data
+        Updated SessionEntry with merged data.
     """
-    # Convert existing entry to dict
-    existing_dict = existing.model_dump(exclude_none=True)
-    
-    # Merge patch into existing data
+    # Normalise snake_case patch keys → camelCase so we can pass them to SessionEntry
+    _snake_to_camel = {
+        "session_id": "sessionId",
+        "updated_at": "updatedAt",
+        "session_file": "sessionFile",
+        "spawned_by": "spawnedBy",
+        "thinking_level": "thinkingLevel",
+        "verbose_level": "verboseLevel",
+        "reasoning_level": "reasoningLevel",
+        "input_tokens": "inputTokens",
+        "output_tokens": "outputTokens",
+        "total_tokens": "totalTokens",
+        "context_tokens": "contextTokens",
+        "compaction_count": "compactionCount",
+        "delivery_context": "deliveryContext",
+        "model_provider": "modelProvider",
+        "model_override": "modelOverride",
+        "provider_override": "providerOverride",
+    }
+    normalised_patch: dict[str, Any] = {}
     for key, value in patch.items():
+        camel_key = _snake_to_camel.get(key, key)
+        normalised_patch[camel_key] = value
+
+    if existing is None:
+        # Create new entry — ensure we have a sessionId
+        if "sessionId" not in normalised_patch:
+            import uuid as _uuid
+            normalised_patch["sessionId"] = str(_uuid.uuid4())
+        normalised_patch.setdefault("updatedAt", int(__import__("time").time() * 1000))
+        return SessionEntry(**normalised_patch)
+
+    # Merge into existing
+    existing_dict = existing.model_dump(exclude_none=True)
+    for key, value in normalised_patch.items():
         if value is not None:
             existing_dict[key] = value
-    
+
     # Update timestamp
-    existing_dict['updatedAt'] = int(__import__("time").time() * 1000)
-    
-    # Create new SessionEntry with merged data
+    existing_dict["updatedAt"] = int(__import__("time").time() * 1000)
     return SessionEntry(**existing_dict)

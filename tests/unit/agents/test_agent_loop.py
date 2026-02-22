@@ -17,34 +17,38 @@ from openclaw.agents.tools.base import AgentTool, ToolResult
 
 
 class MockProvider(LLMProvider):
-    """Mock LLM provider for testing"""
-    
+    """Mock LLM provider for testing."""
+
     def __init__(self, responses=None):
-        super().__init__()
+        super().__init__(model="mock/model")
         self.responses = responses or []
         self.call_count = 0
-    
-    async def stream(self, messages, model, tools=None):
-        """Mock streaming"""
+
+    async def stream(self, messages, tools=None, max_tokens=4096, **kwargs):
+        """Mock streaming."""
         self.call_count += 1
-        
-        # Yield test responses
         yield LLMResponse(type="text_delta", content="Hello ")
         yield LLMResponse(type="text_delta", content="world")
         yield LLMResponse(type="done", content="")
 
+    def get_client(self):
+        return None
+
+    @property
+    def provider_name(self) -> str:
+        return "mock"
+
 
 class MockTool(AgentTool):
-    """Mock tool for testing"""
-    
+    """Mock tool for testing."""
+
     def __init__(self, name="test_tool"):
-        super().__init__(
-            name=name,
-            description="Test tool",
-            parameters={"type": "object", "properties": {}}
-        )
+        # LegacyAgentTool.__init__ takes no arguments; set attributes directly
+        super().__init__()
+        self.name = name
+        self.description = "Test tool"
         self.execute_count = 0
-    
+
     async def execute(self, params):
         self.execute_count += 1
         return ToolResult(success=True, content=f"Tool executed with {params}")

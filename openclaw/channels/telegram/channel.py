@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class TelegramChannel(ChannelPlugin):
     """Telegram bot channel"""
 
-    def __init__(self):
+    def __init__(self, bot_token: str | None = None):
         super().__init__()
         self.id = "telegram"
         self.label = "Telegram"
@@ -40,6 +40,92 @@ class TelegramChannel(ChannelPlugin):
         self._owner_id: Optional[str] = None
         self._command_handler: Optional[TelegramCommandHandler] = None
         self._config: Optional[dict] = None
+
+        if bot_token is not None:
+            if not bot_token:
+                raise ValueError("bot_token cannot be an empty string")
+            self._bot_token = bot_token
+
+    @property
+    def bot_token(self) -> str | None:
+        """Return the configured bot token."""
+        return self._bot_token
+
+    async def _make_api_call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """
+        Make a raw Telegram Bot API call.
+
+        Args:
+            method: Telegram Bot API method (e.g. "sendMessage")
+            params: Method parameters
+
+        Returns:
+            Parsed API response dict
+        """
+        import aiohttp
+        if not self._bot_token:
+            raise ValueError("Bot token not configured")
+        url = f"https://api.telegram.org/bot{self._bot_token}/{method}"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=params or {}) as resp:
+                data = await resp.json()
+                if not data.get("ok"):
+                    raise Exception(f"Telegram API error: {data.get('description', 'Unknown error')}")
+                return data.get("result", {})
+
+    async def send_message(self, chat_id: str, text: str, **kwargs) -> dict[str, Any]:
+        """
+        Send a text message to a chat.
+
+        Args:
+            chat_id: Telegram chat ID
+            text: Message text
+
+        Returns:
+            Sent message dict with at least ``message_id``
+        """
+        return await self._make_api_call("sendMessage", {"chat_id": chat_id, "text": text, **kwargs})
+
+    async def send_photo(self, chat_id: str, photo: str, **kwargs) -> dict[str, Any]:
+        """
+        Send a photo to a chat.
+
+        Args:
+            chat_id: Telegram chat ID
+            photo: Photo URL or file_id
+
+        Returns:
+            Sent message dict
+        """
+        return await self._make_api_call("sendPhoto", {"chat_id": chat_id, "photo": photo, **kwargs})
+
+    def parse_message(self, telegram_message: dict[str, Any]) -> dict[str, Any]:
+        """
+        Parse a raw Telegram message dict into a normalised format.
+
+        Args:
+            telegram_message: Raw Telegram message object
+
+        Returns:
+            Normalised message dict with ``text``, ``user_id``, ``chat_id``,
+            ``message_id``, ``is_command`` fields.
+        """
+        from_user = telegram_message.get("from", {})
+        chat = telegram_message.get("chat", {})
+        text = telegram_message.get("text", "")
+        entities = telegram_message.get("entities", [])
+
+        is_command = any(e.get("type") == "bot_command" for e in entities)
+
+        return {
+            "message_id": str(telegram_message.get("message_id", "")),
+            "user_id": str(from_user.get("id", "")),
+            "chat_id": str(chat.get("id", "")),
+            "text": text,
+            "is_command": is_command,
+            "date": telegram_message.get("date"),
+            "from": from_user,
+        }
 
     async def start(self, config: dict[str, Any]) -> None:
         """Start Telegram bot"""
@@ -193,23 +279,41 @@ class TelegramChannel(ChannelPlugin):
             raise
 
     async def send_photo(
-        self, target: str, photo, caption: str | None = None, 
-        reply_to: str | None = None, keyboard=None
-    ) -> str:
-        """Send photo message"""
+        self,
+        target: str | None = None,
+        photo: Any = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        keyboard: Any = None,
+        chat_id: str | None = None,
+        **kwargs,
+    ) -> Any:
+        """Send photo message.
+
+        Supports two calling styles:
+        - Legacy: send_photo(target, photo, caption, ...)
+        - API-style: send_photo(chat_id="...", photo="...", ...)
+        """
+        # New-style call: chat_id keyword provided (uses _make_api_call)
+        if chat_id is not None:
+            return await self._make_api_call(
+                "sendPhoto", {"chat_id": chat_id, "photo": photo, **kwargs}
+            )
+
+        # Legacy style: requires a running bot application
         if not self._app:
             raise RuntimeError("Telegram channel not started")
-        
-        chat_id = int(target) if target.lstrip("-").isdigit() else target
-        
+
+        resolved_chat_id = int(target) if target and target.lstrip("-").isdigit() else target
+
         try:
             message = await self._app.bot.send_photo(
-                chat_id=chat_id,
+                chat_id=resolved_chat_id,
                 photo=photo,
                 caption=caption,
                 parse_mode="Markdown" if caption else None,
                 reply_to_message_id=int(reply_to) if reply_to else None,
-                reply_markup=keyboard
+                reply_markup=keyboard,
             )
             return str(message.message_id)
         except Exception as e:

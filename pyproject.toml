@@ -25,6 +25,11 @@ classifiers = [
 ]
 
 dependencies = [
+    # pi-mono-python infrastructure (path deps for workspace alignment)
+    "pi-agent",
+    "pi-ai",
+    "pi-coding-agent",
+    "pi-tui",
     # Core
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
@@ -204,3 +209,17 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "@abstractmethod",
 ]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest-timeout>=2.4.0",
+]
+
+# ---------------------------------------------------------------------------
+# pi-mono-python path dependencies (resolved by uv)
+# ---------------------------------------------------------------------------
+[tool.uv.sources]
+pi-agent      = { path = "../pi-mono-python/packages/agent",        editable = true }
+pi-ai         = { path = "../pi-mono-python/packages/ai",           editable = true }
+pi-coding-agent = { path = "../pi-mono-python/packages/coding-agent", editable = true }
+pi-tui        = { path = "../pi-mono-python/packages/tui",          editable = true }

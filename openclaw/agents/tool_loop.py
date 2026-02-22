@@ -93,6 +93,10 @@ class ToolLoopOrchestrator:
         images: list[str] | None = None,
         max_tokens: int = 4096,
         max_turns: int | None = None,
+        hook_before_tool_call: Any = None,
+        hook_after_tool_call: Any = None,
+        hook_llm_input: Any = None,
+        hook_llm_output: Any = None,
     ) -> AsyncIterator[Event | AgentEvent]:
         """Execute a turn with automatic tool loop handling
         
@@ -144,10 +148,18 @@ class ToolLoopOrchestrator:
                 # Follow-up call - session already has tool results added
                 messages = self._prepare_messages(session, max_turns, runtime.provider_name)
             
+            # --- llm_input hook ---
+            if hook_llm_input:
+                try:
+                    await hook_llm_input({"messages": messages, "tools": tools, "iteration": iteration})
+                except Exception as _he:
+                    logger.debug(f"llm_input hook error: {_he}")
+
             # Make LLM call
             turn_text = ""
             turn_tool_calls = []
-            
+            raw_llm_output: dict = {}
+
             # Stream from runtime's single-turn execution
             async for event in runtime._stream_single_turn(
                 session=session,
@@ -159,7 +171,7 @@ class ToolLoopOrchestrator:
                 # Forward event to subscribers
                 await self._notify_observers(event)
                 yield event
-                
+
                 # Track what happened
                 if hasattr(event, 'type'):
                     if event.type in (EventType.AGENT_TEXT, EventType.TEXT, "text_delta"):
@@ -171,9 +183,11 @@ class ToolLoopOrchestrator:
                             else:
                                 delta_text = str(delta_data)
                             turn_text += delta_text
-                    
+                            raw_llm_output.setdefault("text", "")
+                            raw_llm_output["text"] += delta_text
+
                     elif event.type == EventType.TOOL_EXECUTION_END:
-                        # Track tool result
+                        # --- after_tool_call hook ---
                         if hasattr(event, 'data') and isinstance(event.data, dict):
                             tool_result = ToolResult(
                                 tool_call_id=event.data.get('tool_call_id', ''),
@@ -184,6 +198,35 @@ class ToolLoopOrchestrator:
                             )
                             all_tool_results.append(tool_result)
                             turn_tool_calls.append(tool_result)
+                            if hook_after_tool_call:
+                                try:
+                                    await hook_after_tool_call({
+                                        "tool_name": tool_result.tool_name,
+                                        "tool_call_id": tool_result.tool_call_id,
+                                        "success": tool_result.success,
+                                        "result": tool_result.result,
+                                    })
+                                except Exception as _he:
+                                    logger.debug(f"after_tool_call hook error: {_he}")
+
+                    elif event.type == EventType.TOOL_EXECUTION_START:
+                        # --- before_tool_call hook ---
+                        if hook_before_tool_call and hasattr(event, 'data') and isinstance(event.data, dict):
+                            try:
+                                await hook_before_tool_call({
+                                    "tool_name": event.data.get('tool_name', ''),
+                                    "tool_call_id": event.data.get('tool_call_id', ''),
+                                    "arguments": event.data.get('arguments', {}),
+                                })
+                            except Exception as _he:
+                                logger.debug(f"before_tool_call hook error: {_he}")
+
+            # --- llm_output hook ---
+            if hook_llm_output and raw_llm_output:
+                try:
+                    await hook_llm_output({"output": raw_llm_output, "iteration": iteration})
+                except Exception as _he:
+                    logger.debug(f"llm_output hook error: {_he}")
             
             # Check if we need follow-up
             if turn_tool_calls:

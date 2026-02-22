@@ -1,4 +1,11 @@
-"""Sync manager coordinates auto-sync and file watching"""
+"""Sync manager coordinates auto-sync and file watching.
+
+Matches TypeScript memory/sync-manager.ts:
+- File system watching (sessions + docs + memory dirs)
+- Session memory source (experimental.sessionMemory)
+- Periodic sync interval
+- Session warm-up on session-key query
+"""
 from __future__ import annotations
 
 import asyncio
@@ -188,6 +195,32 @@ class SyncManager:
                 memory_manager=self.memory_manager,
             )
     
+    async def warm_session(self, session_key: str) -> None:
+        """
+        Pre-warm memory index for a session.
+
+        Matches TypeScript experimental.sessionMemory warm-up:
+        Loads recent session messages into the memory index so they are
+        available for similarity search during the agent's first turn.
+
+        Args:
+            session_key: Session key to warm up.
+        """
+        logger.debug(f"Warming session memory for: {session_key}")
+        try:
+            sessions_dir = self.workspace_path / ".openclaw" / "sessions"
+            if not sessions_dir.exists():
+                return
+            # Find matching session files
+            for jsonl_file in sessions_dir.glob("*.jsonl"):
+                try:
+                    from .types import MemorySource
+                    await self.memory_manager.add_file(jsonl_file, MemorySource.SESSIONS)
+                except Exception as exc:
+                    logger.debug(f"Session warm-up file failed: {exc}")
+        except Exception as exc:
+            logger.debug(f"Session warm-up failed: {exc}")
+
     def get_stats(self) -> dict[str, Any]:
         """Get sync manager statistics"""
         return {

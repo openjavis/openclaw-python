@@ -95,6 +95,97 @@ def merge_hybrid_results(
     return results
 
 
+def apply_temporal_decay(
+    results: List[SearchResult],
+    half_life_days: float = 30.0,
+    current_timestamp_ms: int | None = None,
+) -> List[SearchResult]:
+    """
+    Apply temporal decay to search result scores.
+
+    Matches TypeScript memory temporal decay logic:
+    - Recent memories score higher
+    - Half-life: scores halve every ``half_life_days`` days
+
+    Args:
+        results: Search results (each may have an optional `timestamp` attribute).
+        half_life_days: Days after which relevance halves.
+        current_timestamp_ms: Current time in ms (default: now).
+
+    Returns:
+        Results with decay-adjusted scores.
+    """
+    import math
+    import time
+
+    if not results:
+        return results
+
+    now_ms = current_timestamp_ms or int(time.time() * 1000)
+    half_life_ms = half_life_days * 24 * 3600 * 1000
+
+    for result in results:
+        ts_ms = getattr(result, "timestamp_ms", None)
+        if ts_ms is None:
+            continue  # No timestamp — skip decay
+        age_ms = max(0, now_ms - ts_ms)
+        decay = math.exp(-math.log(2) * age_ms / half_life_ms)
+        result.score *= decay
+
+    return results
+
+
+MemoryCitationsMode = str  # "none" | "inline" | "footnotes" | "full"
+
+
+def format_memory_citations(
+    results: List[SearchResult],
+    mode: MemoryCitationsMode = "inline",
+) -> str:
+    """
+    Format memory search results with citation style.
+
+    Matches TypeScript memoryCitationsMode handling in system prompt builder.
+
+    Modes:
+    - "none": Return raw text only, no citations
+    - "inline": Each chunk has a [source] suffix
+    - "footnotes": Footnotes at the end
+    - "full": Full path + content block per result
+
+    Args:
+        results: Search results.
+        mode: Citation style mode.
+
+    Returns:
+        Formatted string for injection into the system prompt.
+    """
+    if not results:
+        return ""
+
+    if mode == "none":
+        return "\n".join(r.text for r in results)
+
+    if mode == "full":
+        parts = []
+        for r in results:
+            parts.append(f"**{r.path}** (score={r.score:.2f})")
+            parts.append(r.text)
+            parts.append("")
+        return "\n".join(parts)
+
+    if mode == "footnotes":
+        body_parts = []
+        footnotes = []
+        for i, r in enumerate(results, 1):
+            body_parts.append(f"{r.text} [{i}]")
+            footnotes.append(f"[{i}] {r.path}")
+        return "\n".join(body_parts) + "\n\n" + "\n".join(footnotes)
+
+    # Default: "inline"
+    return "\n".join(f"{r.text} [{r.path}]" for r in results)
+
+
 def normalize_scores(results: List[SearchResult]) -> List[SearchResult]:
     """
     Normalize scores to 0-1 range

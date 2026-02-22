@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from openclaw.agents.session_ids import generate_session_id, looks_like_session_id
 from openclaw.agents.session_entry import SessionEntry, SessionStore
@@ -68,6 +68,9 @@ class Session(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
+    # Private override for sessions directory (used for workspace-scoped sessions)
+    _sessions_dir_override: Path | None = PrivateAttr(default=None)
+
     model_config = {"arbitrary_types_allowed": True}
 
     def __init__(
@@ -75,6 +78,8 @@ class Session(BaseModel):
         session_id: str,
         workspace_dir: Path,
         session_key: str | None = None,
+        *,
+        sessions_dir_override: Path | None = None,
         **kwargs
     ):
         """
@@ -86,13 +91,17 @@ class Session(BaseModel):
             session_key: Optional session key for reference (e.g., "agent:main:telegram:dm:123")
         """
         super().__init__(session_id=session_id, workspace_dir=workspace_dir, session_key=session_key, **kwargs)
-        
-        # Validate UUID format
+
+        # Set sessions directory override for workspace-scoped sessions
+        if sessions_dir_override is not None:
+            self._sessions_dir_override = sessions_dir_override
+
+        # Validate UUID format (warning only — non-UUID keys allowed for simplicity)
         import uuid as uuid_module
         try:
             uuid_module.UUID(session_id)
         except ValueError:
-            logger.warning(f"session_id is not a valid UUID: {session_id}")
+            logger.debug(f"session_id is not a valid UUID: {session_id} (non-UUID keys are allowed)")
         
         # Create sessions directory
         self._sessions_dir.mkdir(parents=True, exist_ok=True)
@@ -104,24 +113,16 @@ class Session(BaseModel):
     @property
     def _sessions_dir(self) -> Path:
         """
-        Get sessions directory using OpenClaw standard path.
-        
-        Uses ~/.openclaw/agents/{agentId}/sessions/ format
+        Get sessions directory.
+
+        If a sessions_dir_override was set, use that.
+        Otherwise use workspace_dir / ".sessions" (portable, predictable).
         """
-        home = Path.home()
-        openclaw_home = home / ".openclaw"
-        
-        # Extract agent ID from session_key if available, else use "main"
-        agent_id = "main"
-        if hasattr(self, 'session_key') and self.session_key:
-            from openclaw.routing.session_key import parse_agent_session_key
-            parsed = parse_agent_session_key(self.session_key)
-            if parsed and parsed.agent_id:
-                agent_id = parsed.agent_id
-        
-        sessions_dir = openclaw_home / "agents" / agent_id / "sessions"
+        if self._sessions_dir_override is not None:
+            sessions_dir = self._sessions_dir_override
+        else:
+            sessions_dir = self.workspace_dir / ".sessions"
         sessions_dir.mkdir(parents=True, exist_ok=True)
-        
         return sessions_dir
 
     @property
@@ -251,6 +252,9 @@ class SessionManager:
 
         # Create workspace directory (legacy)
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create .sessions sub-directory for workspace-scoped sessions
+        (self.workspace_dir / ".sessions").mkdir(parents=True, exist_ok=True)
         
         # New OpenClaw standard path: ~/.openclaw/agents/{agentId}/sessions/
         openclaw_home = Path.home() / ".openclaw"
@@ -274,6 +278,9 @@ class SessionManager:
         # Lock file for concurrent access protection
         self._lock_file = self._sessions_file.with_suffix(".json.lock")
         
+        # Also create legacy .sessions directory for backward compatibility
+        (self.workspace_dir / ".sessions").mkdir(parents=True, exist_ok=True)
+
         # Load initial session store
         self._session_store = self._load_session_store()
     
@@ -577,6 +584,46 @@ class SessionManager:
         
         return self._sessions[session_id]
 
+    def get_or_create(self, session_key: str) -> Session:
+        """
+        Simple get-or-create using session_key as the direct session ID.
+
+        This is a lightweight helper for tests and simple use-cases where you
+        want a stable session identified by an arbitrary string key (not UUID).
+        Sessions are stored in workspace_dir / ".sessions" / "{session_key}.json".
+
+        Args:
+            session_key: Arbitrary key to identify the session.
+
+        Returns:
+            Session instance.
+
+        Raises:
+            ValueError: If session_key is empty.
+        """
+        if not session_key:
+            raise ValueError("session_key cannot be empty")
+
+        # Return cached instance if available
+        if session_key in self._sessions:
+            return self._sessions[session_key]
+
+        sessions_dir = self.workspace_dir / ".sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        session = Session(
+            session_id=session_key,
+            workspace_dir=self.workspace_dir,
+            session_key=session_key,
+            sessions_dir_override=sessions_dir,
+        )
+        self._sessions[session_key] = session
+
+        # Persist immediately so list_sessions() can find it even without messages
+        session._save()
+
+        return session
+
     def get_or_create_session_by_key(self, session_key: str) -> Session:
         """
         Get or create session using session key (simpler wrapper).
@@ -591,6 +638,36 @@ class SessionManager:
             Session instance using UUID
         """
         return self.get_or_create_session(session_key=session_key)
+
+    def get_or_create(self, session_id: str) -> "Session":
+        """
+        Simple get-or-create a session by session_id (backward-compat / testing API).
+
+        Uses workspace_dir / ".sessions" / "{session_id}.json" for storage so that
+        tests that pass a plain string ID (not a UUID) work correctly.
+
+        Args:
+            session_id: Any string identifier for the session.
+
+        Returns:
+            Session instance stored in workspace_dir / ".sessions"
+        """
+        if not session_id:
+            raise ValueError("session_id cannot be empty")
+
+        if session_id in self._sessions:
+            return self._sessions[session_id]
+
+        sessions_dir = self.workspace_dir / ".sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        session = Session(
+            session_id=session_id,
+            workspace_dir=self.workspace_dir,
+            sessions_dir_override=sessions_dir,
+        )
+        self._sessions[session_id] = session
+        return session
     
     def get_session(self, session_id: str) -> Session:
         """
@@ -608,21 +685,29 @@ class SessionManager:
 
     def list_sessions(self) -> list[str]:
         """
-        List all session IDs
+        List all session keys/IDs created via get_or_create().
+
+        Combines on-disk files in workspace_dir/.sessions with any in-memory
+        sessions whose session_id is their own key (i.e. created by get_or_create).
 
         Returns:
-            List of session IDs
+            Sorted list of session keys.
         """
         sessions_dir = self.workspace_dir / ".sessions"
-        if not sessions_dir.exists():
-            return []
+        disk_sessions: set[str] = set()
+        if sessions_dir.exists():
+            for f in sessions_dir.glob("*.json"):
+                # Exclude index/map files
+                if f.name not in ("session_map.json", "sessions.json"):
+                    disk_sessions.add(f.stem)
 
-        session_ids = []
-        for f in sessions_dir.glob("*.json"):
-            if f.name != "session_map.json":  # Exclude session map file
-                session_ids.append(f.stem)
+        # Include in-memory simple sessions (where session_id == their key)
+        # These are sessions created by get_or_create() but not yet saved
+        for sid, session in self._sessions.items():
+            if session.session_id == sid:
+                disk_sessions.add(sid)
 
-        return sorted(session_ids)
+        return sorted(disk_sessions)
     
     def get_session_key_for_id(self, session_id: str) -> str | None:
         """Get session key for given session ID."""

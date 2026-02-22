@@ -2,7 +2,8 @@
 Agent module for ClawdBot
 """
 
-from .agent_session import AgentSession
+from .agent import Agent
+from .queues import AgentSession  # Simple queue-based session for Agent class
 from .context import ContextManager, ContextWindow
 from .errors import (
     AgentError,
@@ -21,6 +22,8 @@ from .session import Message, Session, SessionManager
 from .tool_loop import ToolLoopOrchestrator
 
 __all__ = [
+    # Core
+    "Agent",
     # Runtime
     "AgentRuntime",
     "AgentEvent",

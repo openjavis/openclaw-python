@@ -32,11 +32,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +146,11 @@ class EventType(str, Enum):
     SYSTEM_STARTUP = "system.startup"
     SYSTEM_SHUTDOWN = "system.shutdown"
     SYSTEM_ERROR = "system.error"
+
+    # ========================================================================
+    # Usage / metrics
+    # ========================================================================
+    USAGE = "usage"
 
 
 # ============================================================================
@@ -471,3 +475,37 @@ def subscribe(event_type: EventType | None, listener: EventListener) -> None:
 def unsubscribe(event_type: EventType | None, listener: EventListener) -> bool:
     """Unsubscribe from global bus (convenience function)"""
     return get_event_bus().unsubscribe(event_type, listener)
+
+
+# ============================================================================
+# pi_ai type compatibility re-exports
+#
+# These allow code to import pi_ai types via openclaw.events for consistency
+# with the TypeScript openclaw design (all events from one module).
+# ============================================================================
+
+try:
+    from pi_ai.types import (
+        AssistantMessageEvent,
+        AssistantMessage,
+        UserMessage,
+        ToolCall,
+        EventTextDelta,
+        EventToolCall,
+        EventUsage,
+        SimpleStreamOptions,
+    )
+
+    __all_pi_ai__ = [
+        "AssistantMessageEvent",
+        "AssistantMessage",
+        "UserMessage",
+        "ToolCall",
+        "EventTextDelta",
+        "EventToolCall",
+        "EventUsage",
+        "SimpleStreamOptions",
+    ]
+except ImportError:
+    # pi_ai not available — graceful degradation
+    pass

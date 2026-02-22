@@ -280,3 +280,47 @@ def is_acp_session_key(session_key: str | None) -> bool:
     if not parsed:
         return False
     return parsed.rest.startswith("acp:")
+
+
+def evaluate_session_freshness(
+    last_activity_ms: int | None,
+    reset_policy: str | None = None,
+    idle_duration_ms: int | None = None,
+) -> bool:
+    """
+    Evaluate if a session should be reset based on freshness policy.
+
+    Matches TypeScript evaluateSessionFreshness().
+
+    Policies:
+    - "daily": Reset if last activity > 24h ago
+    - "idle": Reset if idle for configured duration (default 4h)
+    - None / "off": Never reset
+
+    Args:
+        last_activity_ms: Timestamp of last activity in milliseconds (Unix epoch).
+        reset_policy: "daily" | "idle" | "off" | None
+        idle_duration_ms: Idle duration in milliseconds for "idle" policy.
+
+    Returns:
+        True if session should be reset (is stale), False if still fresh.
+    """
+    import time
+
+    if not reset_policy or reset_policy == "off":
+        return False
+
+    if last_activity_ms is None:
+        return False
+
+    now_ms = int(time.time() * 1000)
+    elapsed_ms = now_ms - last_activity_ms
+
+    if reset_policy == "daily":
+        return elapsed_ms > 24 * 60 * 60 * 1000  # 24 hours
+
+    if reset_policy == "idle":
+        threshold = idle_duration_ms if idle_duration_ms is not None else 4 * 60 * 60 * 1000  # 4 hours
+        return elapsed_ms > threshold
+
+    return False
